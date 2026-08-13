@@ -104,7 +104,7 @@ def _symbol_hits(index: ModuleIndex, keywords: list[str]) -> int:
 
 def _find_abstraction(
     matches: list[PlanMatch], index: dict[str, ModuleIndex]
-) -> str | None:
+) -> tuple[str, set[str]] | None:
     dirs: dict[str, list[PlanMatch]] = {}
     for m in matches:
         if not _is_source(m.path):
@@ -135,7 +135,18 @@ def _find_abstraction(
     if not candidates:
         return None
     best = max(candidates, key=lambda m: (m.symbol_hits, m.hits))
-    return best.path
+    base_classes = set(index[best.path].classes)
+    d = best.path.rpartition("/")[0]
+    impl_paths: set[str] = set()
+    for m in matches:
+        if not _is_source(m.path) or m.path == best.path:
+            continue
+        if m.path.rpartition("/")[0] != d:
+            continue
+        idx = index.get(m.path)
+        if idx is not None and any(b in base_classes for b in idx.bases):
+            impl_paths.add(m.path)
+    return best.path, impl_paths
 
 
 def analyze_plan(root: Path, request: str) -> PlanResult:
@@ -152,10 +163,13 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
             index[m.path] = idx
             m.symbol_hits = _symbol_hits(idx, keywords)
 
+    abstraction = _find_abstraction(matches, index)
+    impl_paths = abstraction[1] if abstraction else set()
     ranked = sorted(
         matches,
         key=lambda m: (
             0 if _is_source(m.path) else 1,
+            1 if m.path in impl_paths else 0,
             -m.symbol_hits,
             -m.hits,
             1 if _is_init(m.path) else 0,
@@ -167,10 +181,10 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
     duplication_risk = any(
         m.hits >= 3 or len(m.keywords) >= 2 for m in source_matches
     )
-    abstraction = _find_abstraction(ranked, index)
     if abstraction:
+        base_path = abstraction[0]
         suggestion = (
-            f"Existing provider abstraction detected in `{abstraction}`. "
+            f"Existing provider abstraction detected in `{base_path}`. "
             "Follow the existing provider pattern instead of creating a new "
             "abstraction."
         )

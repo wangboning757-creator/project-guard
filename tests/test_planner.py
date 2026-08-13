@@ -73,4 +73,5 @@ def test_plan_prefers_provider_abstraction_over_smallest_file(tmp_path):
     paths = [m.path for m in result.matches]
     assert paths.index("pkg/base.py") < paths.index("pkg/__init__.py")
     assert paths.index("pkg/factory.py") < paths.index("pkg/__init__.py")
+    assert paths.index("pkg/base.py") < paths.index("pkg/openai.py")
     assert "provider abstraction" in result.suggestion.lower()
