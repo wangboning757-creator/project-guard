@@ -144,8 +144,12 @@ def _find_abstraction(
         if m.path.rpartition("/")[0] != d:
             continue
         idx = index.get(m.path)
-        if idx is not None and any(b in base_classes for b in idx.bases):
-            impl_paths.add(m.path)
+        if idx is not None:
+            is_impl = any(
+                "provider" in c.lower() for c in idx.classes
+            ) or any(b in base_classes for b in idx.bases)
+            if is_impl:
+                impl_paths.add(m.path)
     return best.path, impl_paths
 
 
