@@ -15,16 +15,6 @@ from .config import (
 from .models import ReviewResult, ScanResult, ScoreDeduction, ScoreResult
 
 
-def _duplicate_stems(scan: ScanResult) -> list[tuple[str, list[str]]]:
-    stem_map: dict[str, list[str]] = {}
-    for f in scan.python_files:
-        stem = Path(f.path).stem.lower()
-        if stem in ("__init__", "__main__"):
-            continue
-        stem_map.setdefault(stem, []).append(f.path)
-    return [(s, paths) for s, paths in stem_map.items() if len(paths) > 1]
-
-
 def compute_score(
     scan: ScanResult, review: ReviewResult | None = None
 ) -> ScoreResult:
@@ -53,9 +43,6 @@ def compute_score(
 
     if scan.max_depth > MAX_DEPTH:
         add("deep nesting", 5, f"max directory depth {scan.max_depth}")
-
-    for stem, paths in _duplicate_stems(scan)[:2]:
-        add("duplicate module name", 5, f"{stem}: {', '.join(paths)}")
 
     root = Path(scan.root)
     if not (root / "README.md").is_file():

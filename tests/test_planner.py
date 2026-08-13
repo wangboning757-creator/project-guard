@@ -32,3 +32,45 @@ def test_plan_test_mentions_are_not_treated_as_feature(tmp_path):
     assert result.matches
     assert not result.duplication_risk
     assert "tests/docs" in result.suggestion
+
+
+def _make_provider_repo(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(
+        "from .base import LLMProvider\n", encoding="utf-8"
+    )
+    (pkg / "base.py").write_text(
+        "class LLMProvider:\n"
+        "    def generate(self):\n"
+        "        raise NotImplementedError\n",
+        encoding="utf-8",
+    )
+    (pkg / "openai.py").write_text(
+        "from .base import LLMProvider\n\n"
+        "class OpenAIProvider(LLMProvider):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (pkg / "deepseek.py").write_text(
+        "from .base import LLMProvider\n\n"
+        "class DeepSeekProvider(LLMProvider):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (pkg / "factory.py").write_text(
+        "def create_llm_provider(name):\n"
+        "    return name\n",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def test_plan_prefers_provider_abstraction_over_smallest_file(tmp_path):
+    result = analyze_plan(
+        _make_provider_repo(tmp_path), "Add another LLM vendor"
+    )
+    paths = [m.path for m in result.matches]
+    assert paths.index("pkg/base.py") < paths.index("pkg/__init__.py")
+    assert paths.index("pkg/factory.py") < paths.index("pkg/__init__.py")
+    assert "provider abstraction" in result.suggestion.lower()

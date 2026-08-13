@@ -54,6 +54,7 @@ class PlanMatch(BaseModel):
     path: str
     keywords: list[str] = []
     hits: int = 0
+    symbol_hits: int = 0
     lines: int = 0
 
 

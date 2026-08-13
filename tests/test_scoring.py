@@ -48,3 +48,14 @@ def test_score_large_diff_penalty(tmp_path):
     result = compute_score(scan, review)
     assert result.score == 85
     assert any(d.rule == "large diff" and d.points == 15 for d in result.deductions)
+
+
+def test_score_common_filenames_across_dirs_are_not_penalized(tmp_path):
+    for name in ("llm", "search"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "base.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / name / "mock.py").write_text("x = 1\n", encoding="utf-8")
+    result = compute_score(scan_project(tmp_path))
+    assert not any(
+        d.rule == "duplicate module name" for d in result.deductions
+    )
