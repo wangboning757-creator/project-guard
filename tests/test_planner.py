@@ -514,4 +514,5 @@ def test_plan_avoid_excludes_direct_capability_file(tmp_path):
     assert snap is not None
     assert snap.recommended_scope == ["pkg/cli.py"]
     assert "pkg/search/tavily.py" not in snap.avoid_modifying
+    assert "pkg/search/tavily.py" in snap.existing_capability_files
     assert "provider abstraction" not in result.suggestion.lower()

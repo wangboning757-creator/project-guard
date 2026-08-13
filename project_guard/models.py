@@ -73,6 +73,7 @@ class PlanSnapshot(BaseModel):
     new_dependency: str
     new_abstraction: str
     refactor: str
+    existing_capability_files: list[str] = []
 
 
 class PlanResult(BaseModel):
@@ -108,6 +109,7 @@ class PlanCompliance(BaseModel):
     allowed_scope: list[str] = []
     actual_changes: list[str] = []
     violations: list[str] = []
+    reuse_warnings: list[str] = []
     risk: str = "LOW"
 
 

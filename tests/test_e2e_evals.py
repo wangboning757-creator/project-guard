@@ -21,7 +21,12 @@ import subprocess
 from pathlib import Path
 
 from project_guard.planner import analyze_plan
-from project_guard.reviewer import analyze_diff, check_plan_compliance
+from project_guard.reviewer import (
+    analyze_diff,
+    check_plan_compliance,
+    check_reuse_warnings,
+    merge_risk,
+)
 
 EVALS_DIR = Path(__file__).parent / "evals"
 TXT_EVAL_DIR = EVALS_DIR / "txt_export"
@@ -305,3 +310,57 @@ def test_review_case_d_two_unplanned_production_files(tmp_path):
         if v.startswith("Unplanned production file")
     ]
     assert len(unplanned_violations) == 2, compliance.violations
+
+
+def test_review_reuse_duplicate_capability_warns(tmp_path):
+    """Domain exclusion: adding a new overlapping top-level class inside
+    the allowed scope keeps Plan Compliance PASS but emits a
+    reuse-before-build warning and lifts merged risk to MEDIUM."""
+    repo = _init_git_repo(DOMAIN_EXCLUSION_EVAL_DIR / "repo", tmp_path)
+    expected = _load_expected(DOMAIN_EXCLUSION_EVAL_DIR)
+    snapshot = analyze_plan(repo, expected["goal"]).snapshot
+    assert snapshot is not None
+    assert snapshot.existing_capability_files, (
+        "fixture must identify an existing capability file for this case"
+    )
+
+    _append(
+        repo / "src/sample_app/cli.py",
+        "\n\n"
+        "class ExcludedDomainSearchProvider:\n"
+        "    def __init__(self, exclude_domains: tuple[str, ...] = ()):\n"
+        "        self.exclude_domains = exclude_domains\n",
+    )
+
+    result = analyze_diff(repo)
+    compliance = check_plan_compliance(snapshot, result)
+    warnings = check_reuse_warnings(repo, snapshot, result)
+    assert compliance.status == "PASS"
+    assert any("possible duplicate implementation" in w for w in warnings)
+    assert "src/sample_app/search/tavily.py" in " ".join(warnings)
+    if warnings:
+        compliance.risk = merge_risk(compliance.risk, "MEDIUM")
+    assert compliance.risk == "MEDIUM"
+
+
+def test_review_reuse_wiring_no_warning(tmp_path):
+    """Domain exclusion: wiring-only change reusing the existing provider
+    produces no reuse warning and keeps PASS / LOW."""
+    repo = _init_git_repo(DOMAIN_EXCLUSION_EVAL_DIR / "repo", tmp_path)
+    expected = _load_expected(DOMAIN_EXCLUSION_EVAL_DIR)
+    snapshot = analyze_plan(repo, expected["goal"]).snapshot
+    assert snapshot is not None
+
+    _append(
+        repo / "src/sample_app/cli.py",
+        "\n\n"
+        "def research_with_domains(domains: list[str]) -> dict:\n"
+        "    provider = TavilySearchProvider("
+        "exclude_domains=tuple(domains))\n"
+        "    return provider.search('q')\n",
+    )
+
+    result = analyze_diff(repo)
+    compliance = check_plan_compliance(snapshot, result)
+    assert compliance.status == "PASS"
+    assert check_reuse_warnings(repo, snapshot, result) == []

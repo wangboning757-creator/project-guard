@@ -123,6 +123,12 @@ def review(
         raise typer.Exit(1) from exc
     if snapshot is not None:
         compliance = reviewer.check_plan_compliance(snapshot, result)
+        reuse_warnings = reviewer.check_reuse_warnings(
+            path, snapshot, result
+        )
+        if reuse_warnings:
+            compliance.reuse_warnings = reuse_warnings
+            compliance.risk = reviewer.merge_risk(compliance.risk, "MEDIUM")
         final_risk = reviewer.merge_risk(result.risk, compliance.risk)
         typer.echo(reviewer.format_review(result, risk=final_risk))
         typer.echo("")

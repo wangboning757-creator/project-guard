@@ -43,10 +43,10 @@ def _collect_target(target: ast.AST, index: ModuleIndex) -> None:
         index.identifiers.append(target.attr)
 
 
-def index_python_file(path: Path, rel: str) -> ModuleIndex | None:
-    """Parse one .py file; returns None when the file cannot be parsed."""
+def index_python_source(source: str, rel: str) -> ModuleIndex | None:
+    """Parse Python source text; returns None when it cannot be parsed."""
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        tree = ast.parse(source)
     except (SyntaxError, OSError, ValueError):
         return None
     index = ModuleIndex(path=rel)
@@ -78,3 +78,12 @@ def index_python_file(path: Path, rel: str) -> ModuleIndex | None:
                 if alias.name != "*":
                     index.imports.append(alias.name)
     return index
+
+
+def index_python_file(path: Path, rel: str) -> ModuleIndex | None:
+    """Parse one .py file; returns None when the file cannot be parsed."""
+    try:
+        source = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    return index_python_source(source, rel)

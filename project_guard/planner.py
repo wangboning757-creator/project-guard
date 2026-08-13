@@ -249,6 +249,15 @@ def _identifier_tokens(identifier: str) -> set[str]:
     return tokens
 
 
+def _token_overlap(a: set[str], b: set[str]) -> int:
+    """Count tokens in b matched by any token in a (exact or substring)."""
+    return sum(
+        1
+        for tb in b
+        if any(ta in tb or tb in ta for ta in a)
+    )
+
+
 def _goal_evidence_tokens(request: str) -> set[str]:
     """Specific goal tokens (generic words filtered) for avoid protection."""
     tokens: set[str] = set()
@@ -598,6 +607,13 @@ def _build_guardrail(
         new_dependency=dep,
         new_abstraction=abs_text,
         refactor=refactor,
+        existing_capability_files=sorted(
+            m.path
+            for m in ranked_source
+            if _has_direct_capability_evidence(
+                m.path, goal_tokens, index
+            )
+        ),
     )
     return text, snapshot
 

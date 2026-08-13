@@ -9,7 +9,13 @@ from project_guard.reviewer import (
     PlanSnapshotError,
     analyze_diff,
     check_plan_compliance,
+    check_reuse_warnings,
     load_plan_snapshot,
+)
+
+DOMAIN_GOAL = (
+    "Add an option to exclude one or more domains from research search "
+    "results"
 )
 
 
@@ -324,3 +330,120 @@ def test_review_other_markdown_still_counted(repo):
     )
     assert ".project-guard-instructions.md" not in result.changed_paths
     assert "notes.md" in result.changed_paths
+
+
+def _add_domain_capability(repo):
+    (repo / "search").mkdir()
+    (repo / "search" / "tavily.py").write_text(
+        "class TavilySearchProvider:\n"
+        "    def __init__(self, exclude_domains=()):\n"
+        "        self.exclude_domains = exclude_domains\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "capability")
+
+
+def _domain_snapshot(**overrides) -> PlanSnapshot:
+    base = dict(
+        goal=DOMAIN_GOAL,
+        recommended_scope=["app.py"],
+        possible_scope=[],
+        avoid_modifying=[],
+        new_dependency="not justified",
+        new_abstraction="not justified",
+        refactor="not justified",
+        existing_capability_files=["search/tavily.py"],
+    )
+    base.update(overrides)
+    return PlanSnapshot(**base)
+
+
+def test_reuse_warns_on_overlapping_new_class(repo):
+    _add_domain_capability(repo)
+    (repo / "app.py").write_text(
+        "print('hi')\n"
+        "class ExcludedDomainSearchProvider:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    result = analyze_diff(repo)
+    warnings = check_reuse_warnings(repo, _domain_snapshot(), result)
+    assert any("possible duplicate implementation" in w for w in warnings)
+    assert "ExcludedDomainSearchProvider" in " ".join(warnings)
+    assert "search/tavily.py" in " ".join(warnings)
+
+
+def test_reuse_no_warning_on_wiring(repo):
+    _add_domain_capability(repo)
+    (repo / "app.py").write_text(
+        "print('hi')\n"
+        "provider = TavilySearchProvider(exclude_domains=())\n",
+        encoding="utf-8",
+    )
+    result = analyze_diff(repo)
+    assert check_reuse_warnings(repo, _domain_snapshot(), result) == []
+
+
+def test_reuse_no_warning_on_unrelated_symbol(repo):
+    _add_domain_capability(repo)
+    (repo / "app.py").write_text(
+        "print('hi')\n"
+        "def validate_cli_path(value):\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+    result = analyze_diff(repo)
+    assert check_reuse_warnings(repo, _domain_snapshot(), result) == []
+
+
+def test_reuse_no_warning_when_capability_file_modified(repo):
+    _add_domain_capability(repo)
+    (repo / "app.py").write_text(
+        "print('hi')\n"
+        "class ExcludedDomainSearchProvider:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (repo / "search" / "tavily.py").write_text(
+        "class TavilySearchProvider:\n"
+        "    def __init__(self, exclude_domains=()):\n"
+        "        self.exclude_domains = exclude_domains\n"
+        "        self.include_domains = ()\n",
+        encoding="utf-8",
+    )
+    result = analyze_diff(repo)
+    assert check_reuse_warnings(repo, _domain_snapshot(), result) == []
+
+
+def test_reuse_no_warning_on_provider_expansion_goal(repo):
+    (repo / "providers.py").write_text(
+        "class ProviderVendor:\n    pass\n", encoding="utf-8"
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "providers")
+    (repo / "app.py").write_text(
+        "print('hi')\n"
+        "class NewProviderVendor:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    snapshot = _domain_snapshot(
+        goal="Add support for another provider vendor",
+        existing_capability_files=["providers.py"],
+    )
+    result = analyze_diff(repo)
+    assert check_reuse_warnings(repo, snapshot, result) == []
+
+
+def test_load_plan_snapshot_without_capability_field(tmp_path):
+    path = tmp_path / "old.json"
+    path.write_text(
+        '{"version": 1, "goal": "x", "recommended_scope": [], '
+        '"possible_scope": [], "avoid_modifying": [], '
+        '"new_dependency": "not justified", '
+        '"new_abstraction": "not justified", "refactor": "not justified"}',
+        encoding="utf-8",
+    )
+    snap = load_plan_snapshot(path)
+    assert snap.existing_capability_files == []

@@ -17,6 +17,16 @@ from .config import (
     LARGE_FILE_LINES,
 )
 from .models import PlanCompliance, PlanSnapshot, ReviewResult
+from .planner import (
+    MIN_EVIDENCE_TOKEN_MATCHES,
+    _goal_evidence_tokens,
+    _has_abstraction_expansion_intent,
+    _has_direct_capability_evidence,
+    _identifier_tokens,
+    _keywords,
+    _token_overlap,
+)
+from .python_index import ModuleIndex, index_python_file, index_python_source
 from .scanner import count_lines, iter_files
 
 
@@ -81,6 +91,13 @@ def _git(root: Path, *args: str) -> str:
     if proc.returncode != 0:
         raise NotAGitRepoError((proc.stderr or proc.stdout or "").strip())
     return proc.stdout
+
+
+def _git_optional(root: Path, *args: str) -> str | None:
+    try:
+        return _git(root, *args)
+    except NotAGitRepoError:
+        return None
 
 
 def _porcelain(root: Path) -> list[tuple[str, str]]:
@@ -337,6 +354,86 @@ def check_plan_compliance(
     )
 
 
+def _new_top_level_symbols(
+    root: Path, result: ReviewResult
+) -> dict[str, list[str]]:
+    """Top-level classes/functions added by the working-tree diff."""
+    added: dict[str, list[str]] = {}
+    for rel in result.changed_paths:
+        if not rel.endswith(".py") or _is_test_path(rel):
+            continue
+        full = root / rel
+        if not full.is_file():
+            continue
+        after = index_python_file(full, rel)
+        if after is None:
+            continue
+        before_src = _git_optional(root, "show", f"HEAD:{rel}")
+        before = (
+            index_python_source(before_src, rel)
+            if before_src is not None
+            else None
+        )
+        before_names = (
+            set(before.classes) | set(before.top_functions)
+            if before is not None
+            else set()
+        )
+        after_names = set(after.classes) | set(after.top_functions)
+        new_names = after_names - before_names
+        if new_names:
+            added[rel] = sorted(new_names)
+    return added
+
+
+def check_reuse_warnings(
+    root: Path,
+    snapshot: PlanSnapshot,
+    result: ReviewResult,
+) -> list[str]:
+    """High-confidence reuse-before-build warnings (signal only, never a
+    violation)."""
+    cap_files = snapshot.existing_capability_files
+    if not cap_files:
+        return []
+    if _has_abstraction_expansion_intent(
+        snapshot.goal, _keywords(snapshot.goal)
+    ):
+        return []
+    goal_tokens = _goal_evidence_tokens(snapshot.goal)
+    if not goal_tokens:
+        return []
+    changed = set(result.changed_paths)
+    if any(cap in changed for cap in cap_files):
+        return []
+
+    index: dict[str, ModuleIndex] = {}
+    for cap in cap_files:
+        idx = index_python_file(root / cap, cap)
+        if idx is not None:
+            index[cap] = idx
+    verified = [
+        cap
+        for cap in cap_files
+        if _has_direct_capability_evidence(cap, goal_tokens, index)
+    ]
+    if not verified:
+        return []
+
+    warnings: list[str] = []
+    for rel, new_names in _new_top_level_symbols(root, result).items():
+        for name in new_names:
+            if (
+                _token_overlap(_identifier_tokens(name), goal_tokens)
+                >= MIN_EVIDENCE_TOKEN_MATCHES
+            ):
+                warnings.append(
+                    f"possible duplicate implementation: new `{name}` in "
+                    f"{rel} overlaps existing capability in {verified[0]}"
+                )
+    return warnings
+
+
 def format_plan_compliance(compliance: PlanCompliance) -> str:
     lines = [
         "Plan Compliance:",
@@ -353,4 +450,7 @@ def format_plan_compliance(compliance: PlanCompliance) -> str:
     if compliance.violations:
         lines += ["", "Violations:"]
         lines += [f"- {v}" for v in compliance.violations]
+    if compliance.reuse_warnings:
+        lines += ["", "Possible duplicate implementation:"]
+        lines += [f"- {w}" for w in compliance.reuse_warnings]
     return "\n".join(lines)
