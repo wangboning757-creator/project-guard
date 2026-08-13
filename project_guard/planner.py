@@ -24,6 +24,10 @@ MAX_FILE_BYTES = 1_000_000
 MAX_MATCHES = 20
 ABSTRACT_BASE_NAMES = {"protocol", "abc", "abcmeta"}
 MIN_ABSTRACTION_SIBLINGS = 2
+TEXT_HIT_CAP = 5
+TERM_ALIASES = {"authentication": {"auth"}}
+CLI_KEYWORDS = {"cli", "command", "option", "flag"}
+CLI_IMPORT_NAMES = {"typer", "click", "argparse"}
 
 
 def _is_test_path(rel: str) -> bool:
@@ -54,16 +58,25 @@ def _keywords(request: str) -> list[str]:
     return expanded
 
 
+def _terms_for(keyword: str) -> set[str]:
+    return {keyword} | TERM_ALIASES.get(keyword, set())
+
+
 def _search(root: Path, keywords: list[str]) -> list[PlanMatch]:
-    keyword_set = set(keywords)
+    term_map: dict[str, str] = {}
+    search_terms: set[str] = set()
+    for kw in keywords:
+        for term in _terms_for(kw):
+            search_terms.add(term)
+            term_map.setdefault(term, kw)
     matches: dict[str, PlanMatch] = {}
     for path in iter_files(root):
         if path.name in SKIP_CONTENT_FILES:
             continue
         rel = path.relative_to(root).as_posix()
         low_name = path.name.lower()
-        count = sum(low_name.count(k) for k in keyword_set)
-        matched = [k for k in keyword_set if k in low_name]
+        count = sum(low_name.count(t) for t in search_terms)
+        matched = {term_map[t] for t in search_terms if t in low_name}
         if count == 0:
             try:
                 if path.stat().st_size > MAX_FILE_BYTES:
@@ -73,11 +86,10 @@ def _search(root: Path, keywords: list[str]) -> list[PlanMatch]:
                         if i >= MAX_CONTENT_LINES:
                             break
                         low = line.lower()
-                        for k in keyword_set:
-                            if k in low:
+                        for t in search_terms:
+                            if t in low:
                                 count += 1
-                                if k not in matched:
-                                    matched.append(k)
+                                matched.add(term_map[t])
             except OSError:
                 continue
         if count > 0:
@@ -90,16 +102,82 @@ def _search(root: Path, keywords: list[str]) -> list[PlanMatch]:
     return list(matches.values())
 
 
-def _symbol_hits(index: ModuleIndex, keywords: list[str]) -> int:
-    hits = 0
+def _normalize_stem(stem: str) -> str:
+    return stem.lstrip("_").replace("_", " ").lower()
+
+
+def _ownership_score(path: str, keywords: list[str]) -> int:
+    """+1 per keyword that names the module file itself (e.g. decoder in decoders.py)."""
+    norm = _normalize_stem(Path(path).stem)
+    score = 0
     for kw in keywords:
-        if any(kw in c.lower() for c in index.classes):
-            hits += 2
-        if any(kw in f.lower() for f in index.functions):
-            hits += 2
-        if any(kw in i.lower() for i in index.imports):
-            hits += 1
-    return hits
+        if len(kw) < 4:
+            continue
+        terms = _terms_for(kw)
+        if any(t in norm or norm in t for t in terms):
+            score += 1
+    return score
+
+
+def _cli_entry_modules(root: Path) -> set[str]:
+    """Rel paths of modules referenced by console scripts in pyproject.toml."""
+    modules: set[str] = set()
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        return modules
+    in_scripts = False
+    for raw in pyproject.read_text(
+        encoding="utf-8", errors="ignore"
+    ).splitlines():
+        line = raw.strip()
+        if line.startswith("["):
+            in_scripts = line in (
+                "[project.scripts]", "[tool.poetry.scripts]",
+            )
+            continue
+        if in_scripts and "=" in line:
+            target = line.partition("=")[2].strip().strip('"').strip("'")
+            module = target.split(":", 1)[0].strip()
+            if module:
+                modules.add(module.replace(".", "/") + ".py")
+    return modules
+
+
+def _cli_ownership(
+    path: str,
+    keywords: list[str],
+    entry_modules: set[str],
+    index: dict[str, ModuleIndex],
+) -> int:
+    if not any(k in CLI_KEYWORDS for k in keywords):
+        return 0
+    if path in entry_modules:
+        return 1
+    idx = index.get(path)
+    if idx is None:
+        return 0
+    if "main" in idx.functions:
+        return 1
+    if any(i in CLI_IMPORT_NAMES for i in idx.imports):
+        return 1
+    return 0
+
+
+def _symbol_hits(
+    index: ModuleIndex, keywords: list[str]
+) -> tuple[int, int]:
+    """Return (definition hits, import hits) for ranking."""
+    def_hits = 0
+    import_hits = 0
+    for kw in keywords:
+        terms = _terms_for(kw)
+        if any(any(t in c.lower() for t in terms) for c in index.classes):
+            def_hits += 1
+        if any(any(t in f.lower() for t in terms) for f in index.functions):
+            def_hits += 1
+        if any(any(t in i.lower() for t in terms) for i in index.imports):
+            import_hits += 1
+    return def_hits, import_hits
 
 
 def _find_abstraction(
@@ -159,27 +237,39 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
     matches = _search(root, keywords)
 
     index: dict[str, ModuleIndex] = {}
+    symbol_scores: dict[str, tuple[int, int]] = {}
     for m in matches:
         if not _is_source(m.path):
             continue
         idx = index_python_file(root / m.path, m.path)
         if idx is not None:
             index[m.path] = idx
-            m.symbol_hits = _symbol_hits(idx, keywords)
+            symbol_scores[m.path] = _symbol_hits(idx, keywords)
+            def_hits, import_hits = symbol_scores[m.path]
+            m.symbol_hits = def_hits * 2 + import_hits
 
     abstraction = _find_abstraction(matches, index)
     impl_paths = abstraction[1] if abstraction else set()
-    ranked = sorted(
-        matches,
-        key=lambda m: (
+    entry_modules = _cli_entry_modules(root)
+
+    def _rank_key(m: PlanMatch) -> tuple:
+        def_hits, import_hits = symbol_scores.get(m.path, (0, 0))
+        ownership = _ownership_score(m.path, keywords)
+        ownership += _cli_ownership(
+            m.path, keywords, entry_modules, index
+        )
+        return (
             0 if _is_source(m.path) else 1,
             1 if m.path in impl_paths else 0,
-            -m.symbol_hits,
-            -m.hits,
+            -ownership,
+            -def_hits,
+            -import_hits,
+            -min(m.hits, TEXT_HIT_CAP),
             1 if _is_init(m.path) else 0,
             m.path,
-        ),
-    )[:MAX_MATCHES]
+        )
+
+    ranked = sorted(matches, key=_rank_key)[:MAX_MATCHES]
 
     source_matches = [m for m in ranked if _is_source(m.path)]
     duplication_risk = any(
