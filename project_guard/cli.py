@@ -8,7 +8,7 @@ import typer
 
 from . import __version__
 from . import context as context_mod
-from . import planner, reviewer, scanner, scoring
+from . import instructions, planner, reviewer, scanner, scoring
 
 app = typer.Typer(
     help="Small local-first AI coding governance CLI.",
@@ -39,6 +39,11 @@ def plan(
         "--output-plan",
         help="Write a plan snapshot JSON to this file (no auto-persist)",
     ),
+    output_instructions: Path | None = typer.Option(
+        None,
+        "--output-instructions",
+        help="Write agent instructions Markdown to this file (no auto-persist)",
+    ),
 ):
     """Check a feature request before implementation."""
     result = planner.analyze_plan(path, request)
@@ -56,6 +61,22 @@ def plan(
             typer.echo(f"Error: cannot write plan snapshot: {exc}", err=True)
             raise typer.Exit(1) from exc
         typer.echo(f"Plan snapshot written to {output_plan}")
+    if output_instructions is not None:
+        snapshot = result.snapshot
+        if snapshot is None:
+            typer.echo("Error: no plan snapshot available", err=True)
+            raise typer.Exit(1)
+        try:
+            output_instructions.write_text(
+                instructions.format_instructions(snapshot),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            typer.echo(
+                f"Error: cannot write agent instructions: {exc}", err=True
+            )
+            raise typer.Exit(1) from exc
+        typer.echo(f"Agent instructions written to {output_instructions}")
     typer.echo(planner.format_plan(result))
 
 
