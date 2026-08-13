@@ -88,6 +88,11 @@ def review(
         "--plan",
         help="Plan snapshot JSON to check diff compliance against",
     ),
+    instructions: Path | None = typer.Option(
+        None,
+        "--instructions",
+        help="Agent instructions file to exclude from review diff.",
+    ),
 ):
     """Analyze the current git diff for risk signals."""
     snapshot = None
@@ -97,10 +102,21 @@ def review(
         except reviewer.PlanSnapshotError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from exc
+    exclude_paths: set[Path] = set()
+    if plan is not None:
+        exclude_paths.add(plan)
+    if instructions is not None:
+        if not instructions.is_file():
+            typer.echo(
+                f"Error: instructions file not found: {instructions}",
+                err=True,
+            )
+            raise typer.Exit(1)
+        exclude_paths.add(instructions)
     try:
         result = reviewer.analyze_diff(
             path,
-            exclude_paths={plan} if plan is not None else None,
+            exclude_paths=exclude_paths or None,
         )
     except reviewer.NotAGitRepoError as exc:
         typer.echo(f"Error: not a git repository ({exc})", err=True)

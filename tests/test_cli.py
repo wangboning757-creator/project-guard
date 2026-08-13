@@ -1,3 +1,5 @@
+import subprocess
+
 from typer.testing import CliRunner
 
 from project_guard.cli import app
@@ -106,3 +108,63 @@ def test_review_missing_plan_errors(tmp_path):
     )
     assert result.exit_code == 1
     assert "Error" in result.output
+
+
+def _git(root, *args):
+    subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_review_excludes_plan_and_instructions(tmp_path):
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "T")
+    (tmp_path / "app.py").write_text("print(1)\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "init")
+    (tmp_path / "app.py").write_text(
+        "print(1)\nprint(2)\n", encoding="utf-8"
+    )
+    (tmp_path / ".project-guard-plan.json").write_text(
+        '{"version": 1, "goal": "x", "recommended_scope": ["app.py"], '
+        '"possible_scope": [], "avoid_modifying": [], '
+        '"new_dependency": "not justified", '
+        '"new_abstraction": "not justified", "refactor": "not justified"}',
+        encoding="utf-8",
+    )
+    (tmp_path / ".project-guard-instructions.md").write_text(
+        "# instructions\n", encoding="utf-8"
+    )
+    result = runner.invoke(
+        app,
+        [
+            "review",
+            str(tmp_path),
+            "--plan",
+            str(tmp_path / ".project-guard-plan.json"),
+            "--instructions",
+            str(tmp_path / ".project-guard-instructions.md"),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Git diff review: 1 file(s) changed" in result.output
+    assert "Plan Compliance:" in result.output
+    assert "Status: PASS" in result.output
+
+
+def test_review_missing_instructions_errors(tmp_path):
+    result = runner.invoke(
+        app,
+        [
+            "review",
+            str(tmp_path),
+            "--instructions",
+            str(tmp_path / "missing.md"),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "instructions file not found" in result.output

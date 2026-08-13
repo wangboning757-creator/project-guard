@@ -266,3 +266,61 @@ def test_plan_compliance_refactor_signal(repo):
     assert any(
         "Possible unplanned refactor" in v for v in compliance.violations
     )
+
+
+def test_review_excludes_plan_and_instructions_files(repo):
+    (repo / "app.py").write_text(
+        "print('hi')\nprint('bye')\n", encoding="utf-8"
+    )
+    (repo / "README.md").write_text(
+        "ok\nchanged\n", encoding="utf-8"
+    )
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_app.py").write_text(
+        "def t():\n    pass\n", encoding="utf-8"
+    )
+    (repo / ".project-guard-plan.json").write_text(
+        '{"version": 1}', encoding="utf-8"
+    )
+    (repo / ".project-guard-instructions.md").write_text(
+        "# instructions\n", encoding="utf-8"
+    )
+    result = analyze_diff(
+        repo,
+        exclude_paths={
+            repo / ".project-guard-plan.json",
+            repo / ".project-guard-instructions.md",
+        },
+    )
+    assert ".project-guard-plan.json" not in result.changed_paths
+    assert ".project-guard-instructions.md" not in result.changed_paths
+    assert "app.py" in result.changed_paths
+    assert "tests/test_app.py" in result.changed_paths
+    assert "README.md" in result.changed_paths
+    assert result.changed_files == 3
+
+
+def test_review_does_not_implicitly_ignore_instructions(repo):
+    (repo / ".project-guard-instructions.md").write_text(
+        "# instructions\n", encoding="utf-8"
+    )
+    (repo / "app.py").write_text(
+        "print('hi')\nprint('bye')\n", encoding="utf-8"
+    )
+    result = analyze_diff(repo)
+    assert ".project-guard-instructions.md" in result.changed_paths
+
+
+def test_review_other_markdown_still_counted(repo):
+    (repo / "app.py").write_text(
+        "print('hi')\nprint('bye')\n", encoding="utf-8"
+    )
+    (repo / ".project-guard-instructions.md").write_text(
+        "# instructions\n", encoding="utf-8"
+    )
+    (repo / "notes.md").write_text("# notes\n", encoding="utf-8")
+    result = analyze_diff(
+        repo, exclude_paths={repo / ".project-guard-instructions.md"}
+    )
+    assert ".project-guard-instructions.md" not in result.changed_paths
+    assert "notes.md" in result.changed_paths
