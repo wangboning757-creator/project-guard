@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-guard"
+version = "0.1.0"
+description = "Small, local-first AI coding governance CLI"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2",
+]
+
+[project.scripts]
+project-guard = "project_guard.cli:app"
+
+[tool.setuptools]
+packages = ["project_guard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
