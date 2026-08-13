@@ -27,7 +27,7 @@ def test_plan_finds_existing_feature(tmp_path):
     assert any(
         m.path.endswith("csv_exporter.py") for m in result.matches
     )
-    assert result.duplication_risk
+    assert not result.duplication_risk
     assert "csv_exporter.py" in result.suggestion
 
 
@@ -308,3 +308,163 @@ def test_plan_guardrail_includes_execution_integration_points(tmp_path):
     assert "pkg/cli.py" in snap.possible_scope
     assert "pkg/storage.py" not in snap.possible_scope
     assert "pkg/storage.py" not in snap.recommended_scope
+
+
+def _make_search_provider_repo(tmp_path):
+    search = tmp_path / "pkg" / "search"
+    search.mkdir(parents=True)
+    (search / "base.py").write_text(
+        "class SearchProvider:\n"
+        '    """Fetches sources for research."""\n'
+        "    def search(self, query):\n"
+        "        return []\n",
+        encoding="utf-8",
+    )
+    (search / "google.py").write_text(
+        "from .base import SearchProvider\n\n"
+        "class GoogleProvider(SearchProvider):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (search / "bing.py").write_text(
+        "from .base import SearchProvider\n\n"
+        "class BingProvider(SearchProvider):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    pkg = tmp_path / "pkg"
+    (pkg / "cli.py").write_text(
+        "import typer\n\n"
+        "def main():\n"
+        "    typer.run(research)\n\n"
+        "def research(sources):\n"
+        "    return sources\n",
+        encoding="utf-8",
+    )
+    (pkg / "workflow.py").write_text(
+        "def run_research(sources):\n"
+        "    return sources\n",
+        encoding="utf-8",
+    )
+    (pkg / "settings.py").write_text(
+        "class Settings:\n"
+        "    max_sources: int = 10\n",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def test_plan_parameter_change_does_not_trigger_provider(tmp_path):
+    result = analyze_plan(
+        _make_search_provider_repo(tmp_path),
+        "Add a CLI option to limit the maximum number of sources used in "
+        "a research run",
+    )
+    snap = result.snapshot
+    assert snap is not None
+    assert snap.recommended_scope == ["pkg/cli.py"]
+    assert "pkg/workflow.py" in snap.possible_scope
+    assert "pkg/search/base.py" not in snap.recommended_scope
+    assert "pkg/search/base.py" not in snap.possible_scope
+    scope_text = _section(result.guardrail, "Recommended change scope:")
+    assert "new provider module" not in scope_text
+    assert "provider abstraction" not in result.suggestion.lower()
+    assert "pkg/workflow.py" not in snap.avoid_modifying
+    assert not result.duplication_risk
+
+
+def test_plan_provider_expansion_still_works(tmp_path):
+    result = analyze_plan(
+        _make_search_provider_repo(tmp_path),
+        "Add support for another search provider",
+    )
+    snap = result.snapshot
+    assert snap is not None
+    assert "pkg/search/base.py" in snap.recommended_scope
+    assert "new provider module" in _section(
+        result.guardrail, "Recommended change scope:"
+    )
+    assert "provider abstraction" in result.suggestion.lower()
+    assert "abstraction" in _section(result.guardrail, "Existing capability to reuse:")
+    assert _section(result.guardrail, "New abstraction:") == "reuse existing abstraction"
+
+
+def test_plan_cli_parameter_change_prefers_cli(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "cli.py").write_text(
+        "import typer\n\n"
+        "def main():\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (pkg / "workflow.py").write_text(
+        "def run(request, timeout):\n"
+        "    return request\n",
+        encoding="utf-8",
+    )
+    (pkg / "config.py").write_text(
+        "class TimeoutConfig:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (pkg / "models.py").write_text(
+        "request = make_request()\n" * 40, encoding="utf-8"
+    )
+    result = analyze_plan(tmp_path, "Add a CLI option for request timeout")
+    snap = result.snapshot
+    assert snap is not None
+    assert snap.recommended_scope == ["pkg/cli.py"]
+    assert "pkg/config.py" in snap.possible_scope
+    assert "pkg/models.py" not in snap.recommended_scope
+    assert "pkg/models.py" not in snap.possible_scope
+    assert "provider abstraction" not in result.suggestion.lower()
+
+
+def test_plan_generic_limit_ignores_provider_pattern(tmp_path):
+    pkg = tmp_path / "pkg"
+    search = pkg / "search"
+    search.mkdir(parents=True)
+    (search / "base.py").write_text(
+        "class SearchProvider:\n"
+        '    """Search provider that gathers sources."""\n'
+        "    def search(self):\n"
+        "        return []\n",
+        encoding="utf-8",
+    )
+    (search / "foo.py").write_text(
+        "from .base import SearchProvider\n\n"
+        "class FooProvider(SearchProvider):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (search / "bar.py").write_text(
+        "from .base import SearchProvider\n\n"
+        "class BarProvider(SearchProvider):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (pkg / "workflow.py").write_text(
+        "def run_research(sources):\n"
+        "    return sources\n",
+        encoding="utf-8",
+    )
+    (pkg / "settings.py").write_text(
+        "def max_sources():\n"
+        "    return 10\n",
+        encoding="utf-8",
+    )
+    result = analyze_plan(
+        tmp_path,
+        "Limit the maximum number of sources per research run",
+    )
+    snap = result.snapshot
+    assert snap is not None
+    assert "pkg/search/base.py" not in snap.recommended_scope
+    assert "new provider module" not in _section(
+        result.guardrail, "Recommended change scope:"
+    )
+    assert "provider abstraction" not in result.suggestion.lower()
+    paths = [m.path for m in result.matches]
+    assert paths.index("pkg/workflow.py") < paths.index("pkg/search/base.py")
+    assert paths.index("pkg/settings.py") < paths.index("pkg/search/base.py")

@@ -28,6 +28,22 @@ TEXT_HIT_CAP = 5
 TERM_ALIASES = {"authentication": {"auth"}}
 CLI_KEYWORDS = {"cli", "command", "option", "flag"}
 CLI_IMPORT_NAMES = {"typer", "click", "argparse"}
+EXPANSION_INTENT_TERMS = {
+    "provider", "vendor", "backend", "adapter", "implementation",
+    "integration", "connector", "driver",
+}
+EXPANSION_INTENT_PHRASES = (
+    "new search engine",
+    "new llm",
+    "another llm",
+    "another provider",
+    "support another",
+    "add support for another",
+)
+PARAM_INTENT_TERMS = {
+    "limit", "maximum", "minimum", "threshold", "count",
+    "timeout", "batch", "size", "option", "flag",
+}
 INTEGRATION_STEMS = {
     "factory", "settings", "config", "registry", "client",
     "workflow", "runtime", "cli", "main", "routes",
@@ -60,6 +76,25 @@ def _keywords(request: str) -> list[str]:
         if "_" in w:
             expanded.extend(p for p in w.split("_") if len(p) > 2)
     return expanded
+
+
+def _has_abstraction_expansion_intent(
+    request: str, keywords: list[str]
+) -> bool:
+    lowered = request.lower()
+    if any(phrase in lowered for phrase in EXPANSION_INTENT_PHRASES):
+        return True
+    return any(k in EXPANSION_INTENT_TERMS for k in keywords)
+
+
+def _has_cli_intent(request: str, keywords: list[str]) -> bool:
+    return any(k in CLI_KEYWORDS for k in keywords)
+
+
+def _has_parameter_change_intent(
+    request: str, keywords: list[str]
+) -> bool:
+    return any(k in PARAM_INTENT_TERMS for k in keywords)
 
 
 def _terms_for(keyword: str) -> set[str]:
@@ -287,6 +322,8 @@ def _build_guardrail(
     impl_paths: set[str],
     entry_modules: set[str],
 ) -> tuple[str, PlanSnapshot]:
+    cli_intent = _has_cli_intent(request, keywords)
+    param_intent = _has_parameter_change_intent(request, keywords)
     ranked_source = [
         m
         for m in ranked
@@ -316,8 +353,20 @@ def _build_guardrail(
             "  - new provider module only if implementation requires it"
         )
     else:
+        ordered = ranked_source
+        if cli_intent:
+            cli_files = [
+                m
+                for m in ranked_source
+                if _cli_ownership(m.path, keywords, entry_modules, index) > 0
+            ]
+            if cli_files:
+                top = cli_files[0]
+                ordered = [top] + [
+                    m for m in ranked_source if m.path != top.path
+                ]
         owner_path: str | None = None
-        for m in ranked_source:
+        for m in ordered:
             if len(scope_paths) >= 3:
                 break
             cli_owner = _cli_ownership(
@@ -336,6 +385,10 @@ def _build_guardrail(
                             owner_path is not None
                             and _imports_owner(m, owner_path, index)
                         )
+                        or (
+                            param_intent
+                            and symbol_scores.get(m.path, (0, 0))[0] > 0
+                        )
                     )
                 )
             ):
@@ -351,6 +404,7 @@ def _build_guardrail(
         if m.path not in scope_paths
         and m.hits >= 3
         and _ownership_score(m.path, keywords) == 0
+        and Path(m.path).stem.lstrip("_").lower() not in INTEGRATION_STEMS
     ][:3]
     avoid_lines = [f"  - {m.path}" for m in avoid] or [
         "  - none - no strong signal"
@@ -491,7 +545,10 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
             def_hits, import_hits = symbol_scores[m.path]
             m.symbol_hits = def_hits * 2 + import_hits
 
-    abstraction = _find_abstraction(matches, index)
+    expansion_intent = _has_abstraction_expansion_intent(request, keywords)
+    abstraction = (
+        _find_abstraction(matches, index) if expansion_intent else None
+    )
     impl_paths = abstraction[1] if abstraction else set()
     entry_modules = _cli_entry_modules(root)
 
@@ -515,9 +572,7 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
     ranked = sorted(matches, key=_rank_key)[:MAX_MATCHES]
 
     source_matches = [m for m in ranked if _is_source(m.path)]
-    duplication_risk = any(
-        m.hits >= 3 or len(m.keywords) >= 2 for m in source_matches
-    )
+    duplication_risk = abstraction is not None
     if abstraction:
         base_path = abstraction[0]
         suggestion = (
