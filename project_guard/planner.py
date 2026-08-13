@@ -28,7 +28,10 @@ TEXT_HIT_CAP = 5
 TERM_ALIASES = {"authentication": {"auth"}}
 CLI_KEYWORDS = {"cli", "command", "option", "flag"}
 CLI_IMPORT_NAMES = {"typer", "click", "argparse"}
-INTEGRATION_STEMS = {"factory", "settings", "config", "registry", "client"}
+INTEGRATION_STEMS = {
+    "factory", "settings", "config", "registry", "client",
+    "workflow", "runtime", "cli", "main", "routes",
+}
 
 
 def _is_test_path(rel: str) -> bool:
@@ -169,6 +172,23 @@ def _is_integration(path: str, cli_owner: int) -> bool:
     return stem in INTEGRATION_STEMS or cli_owner > 0
 
 
+def _imports_owner(
+    m: PlanMatch,
+    owner_path: str,
+    index: dict[str, ModuleIndex],
+) -> bool:
+    """True when this file imports a symbol defined in the owner module."""
+    owner_idx = index.get(owner_path)
+    cand_idx = index.get(m.path)
+    if owner_idx is None or cand_idx is None:
+        return False
+    owner_names = {c.lower() for c in owner_idx.classes}
+    owner_names |= {f.lower() for f in owner_idx.functions}
+    owner_names.add(Path(owner_path).stem.lstrip("_").lower())
+    cand_imports = {i.lower() for i in cand_idx.imports}
+    return bool(owner_names & cand_imports)
+
+
 def _capability_keyword(
     m: PlanMatch, keywords: list[str], index: dict[str, ModuleIndex]
 ) -> str | None:
@@ -296,6 +316,7 @@ def _build_guardrail(
             "  - new provider module only if implementation requires it"
         )
     else:
+        owner_path: str | None = None
         for m in ranked_source:
             if len(scope_paths) >= 3:
                 break
@@ -304,9 +325,19 @@ def _build_guardrail(
             )
             if not scope_paths:
                 scope_paths.append(m.path)
+                owner_path = m.path
             elif (
                 _ownership_score(m.path, keywords) > 0
-                or _is_integration(m.path, cli_owner)
+                or (
+                    _is_integration(m.path, cli_owner)
+                    and (
+                        cli_owner > 0
+                        or (
+                            owner_path is not None
+                            and _imports_owner(m, owner_path, index)
+                        )
+                    )
+                )
             ):
                 scope_paths.append(m.path)
         scope_lines = [

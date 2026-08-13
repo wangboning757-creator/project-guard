@@ -129,10 +129,28 @@ def _existing_stem_map(root: Path) -> dict[str, list[str]]:
     return stem_map
 
 
-def analyze_diff(root: Path) -> ReviewResult:
+def analyze_diff(
+    root: Path, exclude_paths: set[Path] | None = None
+) -> ReviewResult:
     root = root.resolve()
-    statuses = _porcelain(root)
-    numstat = _numstat(root)
+    excluded_abs = (
+        {p.resolve() for p in exclude_paths} if exclude_paths else set()
+    )
+
+    def _is_excluded(rel: str) -> bool:
+        if not excluded_abs:
+            return False
+        try:
+            return (root / rel).resolve() in excluded_abs
+        except OSError:
+            return False
+
+    statuses = [
+        (s, p) for s, p in _porcelain(root) if not _is_excluded(p)
+    ]
+    numstat = {
+        p: v for p, v in _numstat(root).items() if not _is_excluded(p)
+    }
 
     changed: dict[str, str] = {}
     added_files = 0
@@ -197,9 +215,6 @@ def analyze_diff(root: Path) -> ReviewResult:
         reasons.append(
             "possible duplicated modules: " + ", ".join(duplicated)
         )
-    if oversized:
-        reasons.append("oversized changed files: " + ", ".join(oversized))
-
     if total_added >= DIFF_HUGE_ADDITIONS or (
         dependency_changed and many_modules
     ):
@@ -210,7 +225,6 @@ def analyze_diff(root: Path) -> ReviewResult:
         or dependency_changed
         or large_file_additions
         or duplicated
-        or oversized
     ):
         risk = "MEDIUM"
     else:

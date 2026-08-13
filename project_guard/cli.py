@@ -77,7 +77,10 @@ def review(
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from exc
     try:
-        result = reviewer.analyze_diff(path)
+        result = reviewer.analyze_diff(
+            path,
+            exclude_paths={plan} if plan is not None else None,
+        )
     except reviewer.NotAGitRepoError as exc:
         typer.echo(f"Error: not a git repository ({exc})", err=True)
         raise typer.Exit(1) from exc

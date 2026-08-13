@@ -263,7 +263,8 @@ def test_plan_snapshot_round_trip(tmp_path):
         "class Decoder:\n    pass\n", encoding="utf-8"
     )
     (pkg / "client.py").write_text(
-        "decoder = get_decoder()\n" * 30, encoding="utf-8"
+        "from .decoders import Decoder\n\n" + "decoder = Decoder()\n" * 30,
+        encoding="utf-8",
     )
     (pkg / "storage.py").write_text(
         "response = store(decoder)\n" * 30, encoding="utf-8"
@@ -278,3 +279,32 @@ def test_plan_snapshot_round_trip(tmp_path):
     assert snap.new_dependency == "not justified"
     loaded = PlanSnapshot.model_validate_json(snap.model_dump_json())
     assert loaded == snap
+
+
+def test_plan_guardrail_includes_execution_integration_points(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "writer.py").write_text(
+        "def render_report(topic):\n    return 'md'\n", encoding="utf-8"
+    )
+    (pkg / "workflow.py").write_text(
+        "from .writer import render_report\n\n"
+        "def run():\n    return render_report('x')\n",
+        encoding="utf-8",
+    )
+    (pkg / "cli.py").write_text(
+        "from .writer import render_report\n\n"
+        "def resume():\n    return render_report('y')\n",
+        encoding="utf-8",
+    )
+    (pkg / "storage.py").write_text(
+        "report = store_metadata()\n" * 30, encoding="utf-8"
+    )
+    result = analyze_plan(tmp_path, "Add optional plain-text report export")
+    snap = result.snapshot
+    assert snap is not None
+    assert snap.recommended_scope == ["pkg/writer.py"]
+    assert "pkg/workflow.py" in snap.possible_scope
+    assert "pkg/cli.py" in snap.possible_scope
+    assert "pkg/storage.py" not in snap.possible_scope
+    assert "pkg/storage.py" not in snap.recommended_scope

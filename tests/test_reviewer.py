@@ -54,6 +54,19 @@ def test_review_large_diff_is_high(repo):
     assert result.large_file_additions
 
 
+def test_review_large_existing_file_small_change_stays_low(repo):
+    (repo / "large.py").write_text("x = 1\n" * 900, encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add large file")
+    (repo / "large.py").write_text(
+        "x = 1\n" * 900 + "x = 2\n" * 5, encoding="utf-8"
+    )
+    result = analyze_diff(repo)
+    assert result.risk == "LOW"
+    assert result.oversized_changed_files == ["large.py"]
+    assert not any("oversized" in r for r in result.reasons)
+
+
 def test_review_dependency_change_is_medium(repo):
     (repo / "requirements.txt").write_text(
         "requests==2.31\n", encoding="utf-8"
@@ -66,6 +79,45 @@ def test_review_dependency_change_is_medium(repo):
 def test_review_not_git(tmp_path):
     with pytest.raises(NotAGitRepoError):
         analyze_diff(tmp_path)
+
+
+def test_analyze_diff_excludes_plan_file(repo):
+    (repo / ".project-guard-plan.json").write_text(
+        '{"version": 1}', encoding="utf-8"
+    )
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_new.py").write_text(
+        "def t():\n    pass\n", encoding="utf-8"
+    )
+    (repo / "pkg.py").write_text("x = 1\n", encoding="utf-8")
+    result = analyze_diff(
+        repo, exclude_paths={repo / ".project-guard-plan.json"}
+    )
+    assert ".project-guard-plan.json" not in result.changed_paths
+    assert "tests/test_new.py" in result.changed_paths
+    assert "pkg.py" in result.changed_paths
+    assert result.added_files == 2
+
+
+def test_plan_compliance_ignores_plan_snapshot_file(repo):
+    plan = PlanSnapshot(
+        goal="x",
+        recommended_scope=["pkg.py"],
+        possible_scope=[],
+        avoid_modifying=[],
+        new_dependency="not justified",
+        new_abstraction="not justified",
+        refactor="not justified",
+    )
+    (repo / ".project-guard-plan.json").write_text(
+        '{"version": 1}', encoding="utf-8"
+    )
+    (repo / "pkg.py").write_text("x = 1\n", encoding="utf-8")
+    result = analyze_diff(
+        repo, exclude_paths={repo / ".project-guard-plan.json"}
+    )
+    compliance = check_plan_compliance(plan, result)
+    assert compliance.status == "PASS"
 
 
 def test_plan_snapshot_json_round_trip(tmp_path):
