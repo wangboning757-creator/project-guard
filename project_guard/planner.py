@@ -22,6 +22,10 @@ MAX_FILE_BYTES = 1_000_000
 MAX_MATCHES = 20
 
 
+def _is_source(rel: str) -> bool:
+    return rel.endswith(".py") and not rel.startswith("tests/")
+
+
 def _keywords(request: str) -> list[str]:
     words = re.findall(r"[a-z0-9_]+", request.lower())
     words = [w for w in words if w not in STOPWORDS and len(w) > 2]
@@ -67,7 +71,13 @@ def _search(root: Path, keywords: list[str]) -> list[PlanMatch]:
                 lines=count_lines(path),
             )
     ranked = sorted(
-        matches.values(), key=lambda m: (-m.hits, m.lines, m.path)
+        matches.values(),
+        key=lambda m: (
+            0 if _is_source(m.path) else 1,
+            -m.hits,
+            m.lines,
+            m.path,
+        ),
     )
     return ranked[:MAX_MATCHES]
 
@@ -76,15 +86,22 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
     root = root.resolve()
     keywords = _keywords(request)
     matches = _search(root, keywords)
+    source_matches = [m for m in matches if _is_source(m.path)]
     duplication_risk = any(
-        m.hits >= 3 or len(m.keywords) >= 2 for m in matches
+        m.hits >= 3 or len(m.keywords) >= 2 for m in source_matches
     )
-    if matches:
-        smallest = min(matches, key=lambda m: m.lines)
+    if source_matches:
+        smallest = min(source_matches, key=lambda m: m.lines)
         suggestion = (
             f"Existing code already touches this area. Extend the smallest "
             f"matching module `{smallest.path}` ({smallest.lines} lines) and "
             f"reuse its symbols instead of creating a new module."
+        )
+    elif matches:
+        suggestion = (
+            "Existing keyword hits are only in tests/docs - no source code "
+            "implements this yet. Add the smallest new module (or extend the "
+            "closest existing module) and keep the change local."
         )
     else:
         suggestion = (

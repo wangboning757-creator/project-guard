@@ -21,3 +21,14 @@ def test_plan_no_match_suggests_new_module(tmp_path):
     assert result.matches == []
     assert not result.duplication_risk
     assert "new module" in result.suggestion
+
+
+def test_plan_test_mentions_are_not_treated_as_feature(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text(
+        "Add PDF export\n", encoding="utf-8"
+    )
+    result = analyze_plan(tmp_path, "Add PDF export")
+    assert result.matches
+    assert not result.duplication_risk
+    assert "tests/docs" in result.suggestion
