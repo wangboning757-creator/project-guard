@@ -610,7 +610,8 @@ def _build_guardrail(
         existing_capability_files=sorted(
             m.path
             for m in ranked_source
-            if _has_direct_capability_evidence(
+            if m.path not in scope_paths
+            and _has_direct_capability_evidence(
                 m.path, goal_tokens, index
             )
         ),
