@@ -468,3 +468,50 @@ def test_plan_generic_limit_ignores_provider_pattern(tmp_path):
     paths = [m.path for m in result.matches]
     assert paths.index("pkg/workflow.py") < paths.index("pkg/search/base.py")
     assert paths.index("pkg/settings.py") < paths.index("pkg/search/base.py")
+
+
+def test_plan_avoid_excludes_direct_capability_file(tmp_path):
+    pkg = tmp_path / "pkg"
+    search = pkg / "search"
+    search.mkdir(parents=True)
+    (search / "tavily.py").write_text(
+        "class TavilySearchProvider:\n"
+        "    def __init__(self, include_domains=(), exclude_domains=()):\n"
+        "        self.include_domains = include_domains\n"
+        "        self.exclude_domains = exclude_domains\n"
+        "    def search(self, query):\n"
+        "        payload = {}\n"
+        "        if self.exclude_domains:\n"
+        "            payload['exclude_domains'] = list(self.exclude_domains)\n"
+        "        return payload\n",
+        encoding="utf-8",
+    )
+    (search / "base.py").write_text(
+        "class SearchProvider:\n"
+        "    def search(self):\n"
+        "        return {}\n",
+        encoding="utf-8",
+    )
+    (pkg / "cli.py").write_text(
+        "import typer\n\n"
+        "def main():\n"
+        "    typer.run(research)\n\n"
+        "def research(domains):\n"
+        "    return domains\n",
+        encoding="utf-8",
+    )
+    (pkg / "workflow.py").write_text(
+        "def run_research(domains):\n"
+        "    return domains\n",
+        encoding="utf-8",
+    )
+    result = analyze_plan(
+        tmp_path,
+        "Add an option to exclude one or more domains from research "
+        "search results",
+    )
+    snap = result.snapshot
+    assert snap is not None
+    assert snap.recommended_scope == ["pkg/cli.py"]
+    assert "pkg/search/tavily.py" not in snap.avoid_modifying
+    assert "provider abstraction" not in result.suggestion.lower()

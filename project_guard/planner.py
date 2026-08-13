@@ -25,6 +25,7 @@ MAX_MATCHES = 20
 ABSTRACT_BASE_NAMES = {"protocol", "abc", "abcmeta"}
 MIN_ABSTRACTION_SIBLINGS = 2
 TEXT_HIT_CAP = 5
+MIN_EVIDENCE_TOKEN_MATCHES = 2
 TERM_ALIASES = {"authentication": {"auth"}}
 CLI_KEYWORDS = {"cli", "command", "option", "flag"}
 CLI_IMPORT_NAMES = {"typer", "click", "argparse"}
@@ -43,6 +44,15 @@ EXPANSION_INTENT_PHRASES = (
 PARAM_INTENT_TERMS = {
     "limit", "maximum", "minimum", "threshold", "count",
     "timeout", "batch", "size", "option", "flag",
+}
+AVOID_GENERIC_TOKENS = {
+    "one", "more", "set", "get", "add", "option", "flag", "command",
+    "research", "search", "run", "used", "use", "result", "results",
+    "number", "count", "limit", "maximum", "minimum", "timeout",
+    "size", "batch", "list", "data", "value", "values", "enable",
+    "disable", "config", "setting", "settings", "output", "path",
+    "format", "threshold", "support", "feature", "new", "item",
+    "items", "type", "types", "name", "names", "ids",
 }
 INTEGRATION_STEMS = {
     "factory", "settings", "config", "registry", "client",
@@ -224,6 +234,66 @@ def _imports_owner(
     return bool(owner_names & cand_imports)
 
 
+_CAMEL_SPLIT = re.compile(
+    r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+"
+)
+
+
+def _identifier_tokens(identifier: str) -> set[str]:
+    """Normalize a snake_case / CamelCase identifier into lowercase tokens."""
+    tokens: set[str] = set()
+    for part in re.split(r"[_\-\s]+", identifier):
+        for token in _CAMEL_SPLIT.findall(part):
+            if token:
+                tokens.add(token.lower())
+    return tokens
+
+
+def _goal_evidence_tokens(request: str) -> set[str]:
+    """Specific goal tokens (generic words filtered) for avoid protection."""
+    tokens: set[str] = set()
+    for word in re.findall(r"[a-z0-9_]+", request.lower()):
+        if (
+            word in STOPWORDS
+            or word in AVOID_GENERIC_TOKENS
+            or len(word) <= 2
+        ):
+            continue
+        tokens.add(word)
+        if "_" in word:
+            tokens.update(
+                p
+                for p in word.split("_")
+                if len(p) > 2 and p not in AVOID_GENERIC_TOKENS
+            )
+    return tokens
+
+
+def _has_direct_capability_evidence(
+    path: str,
+    goal_tokens: set[str],
+    index: dict[str, ModuleIndex],
+) -> bool:
+    """True when a file defines identifiers matching >=2 specific goal tokens.
+
+    Only used to keep direct capability owners out of avoid_modifying.
+    """
+    idx = index.get(path)
+    if idx is None or not goal_tokens:
+        return False
+    names = (
+        set(idx.classes)
+        | set(idx.functions)
+        | set(idx.imports)
+        | set(idx.identifiers)
+    )
+    return any(
+        len(_identifier_tokens(name) & goal_tokens)
+        >= MIN_EVIDENCE_TOKEN_MATCHES
+        for name in names
+    )
+
+
 def _capability_keyword(
     m: PlanMatch, keywords: list[str], index: dict[str, ModuleIndex]
 ) -> str | None:
@@ -324,6 +394,7 @@ def _build_guardrail(
 ) -> tuple[str, PlanSnapshot]:
     cli_intent = _has_cli_intent(request, keywords)
     param_intent = _has_parameter_change_intent(request, keywords)
+    goal_tokens = _goal_evidence_tokens(request)
     ranked_source = [
         m
         for m in ranked
@@ -405,6 +476,9 @@ def _build_guardrail(
         and m.hits >= 3
         and _ownership_score(m.path, keywords) == 0
         and Path(m.path).stem.lstrip("_").lower() not in INTEGRATION_STEMS
+        and not _has_direct_capability_evidence(
+            m.path, goal_tokens, index
+        )
     ][:3]
     avoid_lines = [f"  - {m.path}" for m in avoid] or [
         "  - none - no strong signal"

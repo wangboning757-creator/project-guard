@@ -15,6 +15,7 @@ class ModuleIndex:
     imports: list[str] = field(default_factory=list)
     bases: list[str] = field(default_factory=list)
     top_functions: list[str] = field(default_factory=list)
+    identifiers: list[str] = field(default_factory=list)
 
 
 def _base_name(node: ast.AST) -> str | None:
@@ -23,6 +24,23 @@ def _base_name(node: ast.AST) -> str | None:
     if isinstance(node, ast.Attribute):
         return node.attr
     return None
+
+
+def _collect_args(node: ast.FunctionDef | ast.AsyncFunctionDef, index: ModuleIndex) -> None:
+    args = node.args
+    for arg in args.posonlyargs + args.args + args.kwonlyargs:
+        index.identifiers.append(arg.arg)
+    if args.vararg:
+        index.identifiers.append(args.vararg.arg)
+    if args.kwarg:
+        index.identifiers.append(args.kwarg.arg)
+
+
+def _collect_target(target: ast.AST, index: ModuleIndex) -> None:
+    if isinstance(target, ast.Name):
+        index.identifiers.append(target.id)
+    elif isinstance(target, ast.Attribute):
+        index.identifiers.append(target.attr)
 
 
 def index_python_file(path: Path, rel: str) -> ModuleIndex | None:
@@ -44,6 +62,12 @@ def index_python_file(path: Path, rel: str) -> ModuleIndex | None:
                     index.bases.append(name)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             index.functions.append(node.name)
+            _collect_args(node, index)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                _collect_target(target, index)
+        elif isinstance(node, ast.AnnAssign):
+            _collect_target(node.target, index)
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 index.imports.append(alias.name.split(".", 1)[0])

@@ -1,0 +1,24 @@
+{
+  "goal": "Add an option to exclude one or more domains from research search results",
+  "recommended_scope_contains": [
+    "src/sample_app/cli.py"
+  ],
+  "recommended_scope_not_contains": [
+    "src/sample_app/search/base.py",
+    "src/sample_app/search/tavily.py"
+  ],
+  "possible_scope_not_contains": [
+    "src/sample_app/search/base.py"
+  ],
+  "avoid_not_contains": [
+    "src/sample_app/search/tavily.py"
+  ],
+  "guardrail_not_contains": [
+    "new provider module"
+  ],
+  "suggestion_not_contains": [
+    "provider abstraction"
+  ],
+  "new_dependency": "not justified",
+  "duplication_risk": false
+}

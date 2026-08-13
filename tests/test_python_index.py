@@ -22,6 +22,7 @@ def test_index_reads_classes_functions_imports(tmp_path):
     assert "LLMProvider" in idx.imports
     assert "LLMProvider" in idx.bases
     assert idx.top_functions == ["create_provider"]
+    assert "name" in idx.identifiers
 
 
 def test_index_skips_syntax_errors(tmp_path):

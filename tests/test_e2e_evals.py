@@ -26,6 +26,7 @@ from project_guard.reviewer import analyze_diff, check_plan_compliance
 EVALS_DIR = Path(__file__).parent / "evals"
 TXT_EVAL_DIR = EVALS_DIR / "txt_export"
 MAX_SOURCES_EVAL_DIR = EVALS_DIR / "max_sources"
+DOMAIN_EXCLUSION_EVAL_DIR = EVALS_DIR / "domain_exclusion"
 
 
 def _load_expected(eval_dir: Path) -> dict:
@@ -143,6 +144,25 @@ def test_eval_plan_max_sources():
     snap = result.snapshot
     assert snap is not None
     _assert_plan_expectations(result, snap, expected)
+
+
+def test_eval_plan_domain_exclusion():
+    """Eval 3: exclude-domains goal keeps cli.py as the recommended owner
+    and never lists the direct capability module (tavily.py, which defines
+    exclude_domains/include_domains) in avoid_modifying.
+
+    Guards the historical bug where a usage-only avoid heuristic banned a
+    module with direct capability evidence for the current goal.
+    """
+    expected = _load_expected(DOMAIN_EXCLUSION_EVAL_DIR)
+    result = analyze_plan(
+        DOMAIN_EXCLUSION_EVAL_DIR / "repo", expected["goal"]
+    )
+    snap = result.snapshot
+    assert snap is not None
+    _assert_plan_expectations(result, snap, expected)
+    assert snap.new_abstraction == "not justified"
+    assert snap.refactor == "not justified"
 
 
 # ---------------------------------------------------------------- review evals
