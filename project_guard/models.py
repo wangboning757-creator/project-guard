@@ -64,6 +64,17 @@ class PlanMatch(BaseModel):
     lines: int = 0
 
 
+class PlanSnapshot(BaseModel):
+    version: int = 1
+    goal: str
+    recommended_scope: list[str]
+    possible_scope: list[str]
+    avoid_modifying: list[str]
+    new_dependency: str
+    new_abstraction: str
+    refactor: str
+
+
 class PlanResult(BaseModel):
     request: str
     keywords: list[str] = []
@@ -71,6 +82,7 @@ class PlanResult(BaseModel):
     duplication_risk: bool = False
     suggestion: str = ""
     guardrail: str = ""
+    snapshot: PlanSnapshot | None = None
 
 
 class ReviewResult(BaseModel):
@@ -79,6 +91,7 @@ class ReviewResult(BaseModel):
     deleted_files: int = 0
     total_added: int = 0
     total_deleted: int = 0
+    changed_paths: list[str] = []
     dependency_changed: bool = False
     many_modules_changed: bool = False
     large_file_additions: list[str] = []
@@ -87,6 +100,15 @@ class ReviewResult(BaseModel):
     oversized_changed_files: list[str] = []
     risk: str = "LOW"
     reasons: list[str] = []
+
+
+class PlanCompliance(BaseModel):
+    status: str = "PASS"
+    goal: str = ""
+    allowed_scope: list[str] = []
+    actual_changes: list[str] = []
+    violations: list[str] = []
+    risk: str = "LOW"
 
 
 class ScoreDeduction(BaseModel):

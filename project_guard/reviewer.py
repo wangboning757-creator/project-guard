@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
+
+from pydantic import ValidationError
 
 from .config import (
     DEPENDENCY_FILES,
@@ -13,12 +16,54 @@ from .config import (
     DIFF_MANY_MODULES,
     LARGE_FILE_LINES,
 )
-from .models import ReviewResult
+from .models import PlanCompliance, PlanSnapshot, ReviewResult
 from .scanner import count_lines, iter_files
 
 
 class NotAGitRepoError(RuntimeError):
     pass
+
+
+class PlanSnapshotError(RuntimeError):
+    pass
+
+
+RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+
+
+def merge_risk(first: str, second: str) -> str:
+    return max((first, second), key=lambda r: RISK_ORDER.get(r, 0))
+
+
+def load_plan_snapshot(path: Path) -> PlanSnapshot:
+    if not path.is_file():
+        raise PlanSnapshotError(f"plan file not found: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise PlanSnapshotError(
+            f"cannot parse plan file {path}: {exc}"
+        ) from exc
+    if data.get("version") != 1:
+        raise PlanSnapshotError(
+            f"unsupported plan snapshot version: {data.get('version')!r} "
+            "(expected 1)"
+        )
+    try:
+        return PlanSnapshot.model_validate(data)
+    except ValidationError as exc:
+        raise PlanSnapshotError(
+            f"invalid plan snapshot: {exc.errors()}"
+        ) from exc
+
+
+def _is_test_path(rel: str) -> bool:
+    parts = Path(rel).parts
+    return (
+        "tests" in parts
+        or Path(rel).name.startswith("test_")
+        or Path(rel).name.endswith("_test.py")
+    )
 
 
 def _git(root: Path, *args: str) -> str:
@@ -180,6 +225,7 @@ def analyze_diff(root: Path) -> ReviewResult:
         deleted_files=deleted_files,
         total_added=total_added,
         total_deleted=total_deleted,
+        changed_paths=[p for p in paths if p != ".gitignore"],
         dependency_changed=dependency_changed,
         many_modules_changed=many_modules,
         large_file_additions=large_file_additions,
@@ -191,7 +237,9 @@ def analyze_diff(root: Path) -> ReviewResult:
     )
 
 
-def format_review(result: ReviewResult) -> str:
+def format_review(
+    result: ReviewResult, risk: str | None = None
+) -> str:
     lines = [
         f"Git diff review: {result.changed_files} file(s) changed "
         f"(+{result.total_added}/-{result.total_deleted})",
@@ -199,7 +247,7 @@ def format_review(result: ReviewResult) -> str:
         f"Deleted files: {result.deleted_files}",
         f"Dependency files changed: {'yes' if result.dependency_changed else 'no'}",
         f"Changed Python modules: {len(result.changed_python_files)}",
-        f"Risk level: {result.risk}",
+        f"Risk level: {risk or result.risk}",
         "",
         "Reasons:",
     ]
@@ -212,4 +260,83 @@ def format_review(result: ReviewResult) -> str:
         if items:
             lines.append(label)
             lines.extend(f"  - {i}" for i in items)
+    return "\n".join(lines)
+
+
+def check_plan_compliance(
+    snapshot: PlanSnapshot, result: ReviewResult
+) -> PlanCompliance:
+    allowed = set(snapshot.recommended_scope) | set(snapshot.possible_scope)
+    avoid = set(snapshot.avoid_modifying)
+    production = [
+        p
+        for p in result.changed_paths
+        if p.endswith(".py") and not _is_test_path(p)
+    ]
+
+    violations: list[str] = []
+    status = "PASS"
+    risk = "LOW"
+
+    avoid_hits = [p for p in production if p in avoid]
+    for p in avoid_hits:
+        violations.append(f"Modified explicitly avoided file: {p}")
+        status = "VIOLATION"
+        risk = "HIGH"
+
+    unplanned = [p for p in production if p not in allowed and p not in avoid_hits]
+    for p in unplanned:
+        violations.append(f"Unplanned production file: {p}")
+    if len(unplanned) >= 2:
+        status = "VIOLATION"
+        risk = "HIGH"
+    elif unplanned and status != "VIOLATION":
+        status = "WARNING"
+        risk = "MEDIUM"
+
+    if snapshot.new_dependency == "not justified" and result.dependency_changed:
+        violations.append(
+            "Dependency file changed although new dependency was not "
+            "justified. Manual verification recommended."
+        )
+        if status != "VIOLATION":
+            status = "WARNING"
+        if risk != "HIGH":
+            risk = "MEDIUM"
+
+    if snapshot.refactor == "not justified" and len(production) >= 5:
+        violations.append(
+            f"Possible unplanned refactor: plan marked refactor as not "
+            f"justified, but actual change spans {len(production)} production "
+            "files."
+        )
+        status = "VIOLATION"
+        risk = "HIGH"
+
+    return PlanCompliance(
+        status=status,
+        goal=snapshot.goal,
+        allowed_scope=sorted(allowed),
+        actual_changes=production,
+        violations=violations,
+        risk=risk,
+    )
+
+
+def format_plan_compliance(compliance: PlanCompliance) -> str:
+    lines = [
+        "Plan Compliance:",
+        f"Status: {compliance.status}",
+        "",
+        "Goal:",
+        compliance.goal,
+        "",
+        "Allowed production scope:",
+    ]
+    lines += [f"- {p}" for p in compliance.allowed_scope] or ["- none"]
+    lines += ["", "Actual production changes:"]
+    lines += [f"- {p}" for p in compliance.actual_changes] or ["- none"]
+    if compliance.violations:
+        lines += ["", "Violations:"]
+        lines += [f"- {v}" for v in compliance.violations]
     return "\n".join(lines)

@@ -1,5 +1,6 @@
 import re
 
+from project_guard.models import PlanSnapshot
 from project_guard.planner import analyze_plan
 
 
@@ -253,3 +254,27 @@ def test_plan_guardrail_multi_role_writer_has_no_strong_signal(tmp_path):
     g = result.guardrail
     assert _section(g, "Refactor:") == "no strong signal"
     assert _section(g, "New dependency:") == "not justified"
+
+
+def test_plan_snapshot_round_trip(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "decoders.py").write_text(
+        "class Decoder:\n    pass\n", encoding="utf-8"
+    )
+    (pkg / "client.py").write_text(
+        "decoder = get_decoder()\n" * 30, encoding="utf-8"
+    )
+    (pkg / "storage.py").write_text(
+        "response = store(decoder)\n" * 30, encoding="utf-8"
+    )
+    result = analyze_plan(tmp_path, "Add a new response decoder")
+    snap = result.snapshot
+    assert snap is not None
+    assert snap.goal == "Add a new response decoder"
+    assert snap.recommended_scope == ["pkg/decoders.py"]
+    assert "pkg/client.py" in snap.possible_scope
+    assert "pkg/storage.py" in snap.avoid_modifying
+    assert snap.new_dependency == "not justified"
+    loaded = PlanSnapshot.model_validate_json(snap.model_dump_json())
+    assert loaded == snap

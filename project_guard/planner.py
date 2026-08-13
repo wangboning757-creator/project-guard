@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .models import PlanMatch, PlanResult
+from .models import PlanMatch, PlanResult, PlanSnapshot
 from .python_index import ModuleIndex, index_python_file
 from .scanner import count_lines, iter_files
 
@@ -266,7 +266,7 @@ def _build_guardrail(
     abstraction: tuple[str, set[str]] | None,
     impl_paths: set[str],
     entry_modules: set[str],
-) -> str:
+) -> tuple[str, PlanSnapshot]:
     ranked_source = [
         m
         for m in ranked
@@ -402,7 +402,7 @@ def _build_guardrail(
     else:
         reason = "No similar modules found; no architecture signal."
 
-    return "\n".join(
+    text = "\n".join(
         [
             "Implementation Guardrail:",
             "",
@@ -431,6 +431,16 @@ def _build_guardrail(
             reason,
         ]
     )
+    snapshot = PlanSnapshot(
+        goal=request,
+        recommended_scope=scope_paths[:1],
+        possible_scope=scope_paths[1:],
+        avoid_modifying=[m.path for m in avoid],
+        new_dependency=dep,
+        new_abstraction=abs_text,
+        refactor=refactor,
+    )
+    return text, snapshot
 
 
 def analyze_plan(root: Path, request: str) -> PlanResult:
@@ -503,7 +513,7 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
             "module (or extend the closest existing module) and keep the "
             "change local; avoid touching unrelated modules."
         )
-    guardrail = _build_guardrail(
+    guardrail, snapshot = _build_guardrail(
         request,
         keywords,
         ranked,
@@ -520,6 +530,7 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
         duplication_risk=duplication_risk,
         suggestion=suggestion,
         guardrail=guardrail,
+        snapshot=snapshot,
     )
 
 
