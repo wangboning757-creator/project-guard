@@ -28,6 +28,7 @@ TEXT_HIT_CAP = 5
 TERM_ALIASES = {"authentication": {"auth"}}
 CLI_KEYWORDS = {"cli", "command", "option", "flag"}
 CLI_IMPORT_NAMES = {"typer", "click", "argparse"}
+INTEGRATION_STEMS = {"factory", "settings", "config", "registry", "client"}
 
 
 def _is_test_path(rel: str) -> bool:
@@ -163,6 +164,31 @@ def _cli_ownership(
     return 0
 
 
+def _is_integration(path: str, cli_owner: int) -> bool:
+    stem = Path(path).stem.lstrip("_").lower()
+    return stem in INTEGRATION_STEMS or cli_owner > 0
+
+
+def _capability_keyword(
+    m: PlanMatch, keywords: list[str], index: dict[str, ModuleIndex]
+) -> str | None:
+    """First keyword this file owns via filename or class/function names."""
+    norm = _normalize_stem(Path(m.path).stem)
+    idx = index.get(m.path)
+    for kw in keywords:
+        terms = _terms_for(kw)
+        if any(t in norm or norm in t for t in terms):
+            return kw
+        if idx is not None and (
+            any(any(t in c.lower() for t in terms) for c in idx.classes)
+            or any(
+                any(t in f.lower() for t in terms) for f in idx.functions
+            )
+        ):
+            return kw
+    return None
+
+
 def _symbol_hits(
     index: ModuleIndex, keywords: list[str]
 ) -> tuple[int, int]:
@@ -229,6 +255,175 @@ def _find_abstraction(
             if is_impl:
                 impl_paths.add(m.path)
     return best.path, impl_paths
+
+
+def _build_guardrail(
+    request: str,
+    keywords: list[str],
+    ranked: list[PlanMatch],
+    index: dict[str, ModuleIndex],
+    symbol_scores: dict[str, tuple[int, int]],
+    abstraction: tuple[str, set[str]] | None,
+    impl_paths: set[str],
+    entry_modules: set[str],
+) -> str:
+    ranked_source = [
+        m
+        for m in ranked
+        if _is_source(m.path)
+        and not _is_init(m.path)
+        and m.path not in impl_paths
+    ]
+
+    scope_paths: list[str] = []
+    scope_lines: list[str] = []
+    if abstraction:
+        base_path = abstraction[0]
+        scope_paths.append(base_path)
+        for m in ranked_source:
+            stem = Path(m.path).stem
+            if (
+                stem in ("factory", "settings", "config")
+                and m.path not in scope_paths
+            ):
+                scope_paths.append(m.path)
+        scope_paths = scope_paths[:3]
+        scope_lines.append(
+            f"  - {scope_paths[0]} only if interface change is required"
+        )
+        scope_lines.extend(f"  - {p}" for p in scope_paths[1:])
+        scope_lines.append(
+            "  - new provider module only if implementation requires it"
+        )
+    else:
+        for m in ranked_source:
+            if len(scope_paths) >= 3:
+                break
+            cli_owner = _cli_ownership(
+                m.path, keywords, entry_modules, index
+            )
+            if not scope_paths:
+                scope_paths.append(m.path)
+            elif (
+                _ownership_score(m.path, keywords) > 0
+                or _is_integration(m.path, cli_owner)
+            ):
+                scope_paths.append(m.path)
+        scope_lines = [
+            f"  - {p}" if i == 0 else f"  - possibly {p}"
+            for i, p in enumerate(scope_paths)
+        ]
+
+    avoid = [
+        m
+        for m in ranked_source
+        if m.path not in scope_paths
+        and m.hits >= 3
+        and _ownership_score(m.path, keywords) == 0
+    ][:3]
+    avoid_lines = [f"  - {m.path}" for m in avoid] or [
+        "  - none - no strong signal"
+    ]
+
+    if abstraction:
+        base_path = abstraction[0]
+        factory = next(
+            (p for p in scope_paths if Path(p).stem == "factory"), None
+        )
+        reuse = f"Existing provider abstraction in {base_path}"
+        if factory:
+            reuse += f" and provider creation path in {factory}"
+        reuse += "."
+    elif scope_paths:
+        top = next(m for m in ranked_source if m.path == scope_paths[0])
+        kw = _capability_keyword(top, keywords, index)
+        if kw:
+            reuse = (
+                f"Existing {kw} implementation in {scope_paths[0]}. "
+                "Reuse it instead of creating a parallel mechanism."
+            )
+        else:
+            reuse = (
+                f"Existing implementation in {scope_paths[0]}. "
+                "Reuse it instead of creating a parallel mechanism."
+            )
+    else:
+        reuse = "No strong signal"
+
+    if any("sdk" in k for k in keywords) or "new dependency" in request.lower():
+        dep = "potentially justified"
+    else:
+        dep = "not justified"
+
+    if abstraction:
+        abs_text = "reuse existing abstraction"
+    elif scope_paths:
+        idx = index.get(scope_paths[0])
+        abs_text = (
+            f"reuse existing structure in {scope_paths[0]}"
+            if idx is not None and idx.bases
+            else "not justified"
+        )
+    else:
+        abs_text = "not justified"
+
+    refactor = "not justified"
+    if scope_paths:
+        top_path = scope_paths[0]
+        idx = index.get(top_path)
+        def_hits = symbol_scores.get(top_path, (0, 0))[0]
+        if (
+            idx is not None
+            and len(idx.top_functions) >= 4
+            and _ownership_score(top_path, keywords) == 0
+            and def_hits == 0
+        ):
+            refactor = "no strong signal"
+
+    if abstraction:
+        reason = (
+            f"Existing provider abstraction detected in {abstraction[0]}; "
+            "follow the existing pattern and keep the change local."
+        )
+    elif scope_paths:
+        reason = (
+            f"Capability ownership is strongest in {scope_paths[0]}; other "
+            "matches are usage or integration sites. Keep the change local."
+        )
+        if refactor == "no strong signal":
+            reason += " No reliable structure signal for refactor judgment."
+    else:
+        reason = "No similar modules found; no architecture signal."
+
+    return "\n".join(
+        [
+            "Implementation Guardrail:",
+            "",
+            "Goal:",
+            request,
+            "",
+            "Recommended change scope:",
+            *(scope_lines or ["  - none"]),
+            "",
+            "Avoid modifying:",
+            *avoid_lines,
+            "",
+            "Existing capability to reuse:",
+            reuse,
+            "",
+            "New dependency:",
+            dep,
+            "",
+            "New abstraction:",
+            abs_text,
+            "",
+            "Refactor:",
+            refactor,
+            "",
+            "Reason:",
+            reason,
+        ]
+    )
 
 
 def analyze_plan(root: Path, request: str) -> PlanResult:
@@ -301,12 +496,23 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
             "module (or extend the closest existing module) and keep the "
             "change local; avoid touching unrelated modules."
         )
+    guardrail = _build_guardrail(
+        request,
+        keywords,
+        ranked,
+        index,
+        symbol_scores,
+        abstraction,
+        impl_paths,
+        entry_modules,
+    )
     return PlanResult(
         request=request,
         keywords=keywords,
         matches=ranked,
         duplication_risk=duplication_risk,
         suggestion=suggestion,
+        guardrail=guardrail,
     )
 
 
@@ -341,4 +547,6 @@ def format_plan(result: PlanResult) -> str:
         "Suggestion:",
         f"  {result.suggestion}",
     ]
+    if result.guardrail:
+        lines += ["", result.guardrail]
     return "\n".join(lines)

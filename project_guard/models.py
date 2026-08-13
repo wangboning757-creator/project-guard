@@ -70,6 +70,7 @@ class PlanResult(BaseModel):
     matches: list[PlanMatch] = []
     duplication_risk: bool = False
     suggestion: str = ""
+    guardrail: str = ""
 
 
 class ReviewResult(BaseModel):

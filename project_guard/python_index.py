@@ -14,6 +14,7 @@ class ModuleIndex:
     functions: list[str] = field(default_factory=list)
     imports: list[str] = field(default_factory=list)
     bases: list[str] = field(default_factory=list)
+    top_functions: list[str] = field(default_factory=list)
 
 
 def _base_name(node: ast.AST) -> str | None:
@@ -31,6 +32,9 @@ def index_python_file(path: Path, rel: str) -> ModuleIndex | None:
     except (SyntaxError, OSError, ValueError):
         return None
     index = ModuleIndex(path=rel)
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            index.top_functions.append(node.name)
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             index.classes.append(node.name)

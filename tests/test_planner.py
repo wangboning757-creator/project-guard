@@ -1,4 +1,19 @@
+import re
+
 from project_guard.planner import analyze_plan
+
+
+def _section(text: str, header: str) -> str:
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == header:
+            out = []
+            for ln in lines[i + 1:]:
+                if re.match(r"^[A-Z][A-Za-z ]*:$", ln.strip()):
+                    break
+                out.append(ln)
+            return "\n".join(out).strip()
+    return ""
 
 
 def test_plan_finds_existing_feature(tmp_path):
@@ -142,3 +157,99 @@ def test_plan_cli_entry_point_gets_bonus(tmp_path):
     paths = [m.path for m in result.matches]
     assert paths.index("pkg/main.py") < paths.index("pkg/client.py")
     assert paths.index("pkg/main.py") < paths.index("pkg/config.py")
+
+
+def test_plan_guardrail_prefers_local_change(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "writer.py").write_text(
+        "class ReportWriter:\n"
+        "    def write_report(self):\n"
+        "        return 'md'\n",
+        encoding="utf-8",
+    )
+    (pkg / "storage.py").write_text(
+        "report = store(rows)\n" * 40, encoding="utf-8"
+    )
+    (pkg / "workflow.py").write_text(
+        "report = process(steps)\n" * 40, encoding="utf-8"
+    )
+    result = analyze_plan(tmp_path, "Add CSV report export")
+    g = result.guardrail
+    scope = _section(g, "Recommended change scope:")
+    assert "pkg/writer.py" in scope
+    assert "pkg/storage.py" not in scope
+    assert "pkg/workflow.py" not in scope
+    assert _section(g, "New dependency:") == "not justified"
+    assert _section(g, "New abstraction:") == "not justified"
+    assert _section(g, "Refactor:") == "not justified"
+
+
+def test_plan_guardrail_reuses_provider_abstraction(tmp_path):
+    result = analyze_plan(
+        _make_provider_repo(tmp_path), "Add another LLM vendor"
+    )
+    g = result.guardrail
+    scope = _section(g, "Recommended change scope:")
+    assert "pkg/base.py" in scope
+    assert "pkg/factory.py" in scope
+    assert "pkg/openai.py" not in scope
+    assert "pkg/deepseek.py" not in scope
+    assert "new provider module" in scope
+    reuse = _section(g, "Existing capability to reuse:")
+    assert "abstraction" in reuse
+    assert "pkg/base.py" in reuse
+    assert _section(g, "New abstraction:") == "reuse existing abstraction"
+
+
+def test_plan_guardrail_ownership_over_usage(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "decoders.py").write_text(
+        "class Decoder:\n"
+        "    pass\n"
+        "\n"
+        "class IdentityDecoder(Decoder):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (pkg / "models.py").write_text(
+        "response = decode(raw)\n" * 60, encoding="utf-8"
+    )
+    (pkg / "transport.py").write_text(
+        "response = transport.decode(data)\n" * 60, encoding="utf-8"
+    )
+    result = analyze_plan(tmp_path, "Add a new response decoder")
+    g = result.guardrail
+    scope = _section(g, "Recommended change scope:")
+    assert "pkg/decoders.py" in scope
+    assert "pkg/transport.py" not in scope
+    assert "pkg/models.py" not in scope
+    avoid = _section(g, "Avoid modifying:")
+    assert "pkg/transport.py" in avoid
+    assert _section(g, "New dependency:") == "not justified"
+    assert _section(g, "Refactor:") == "not justified"
+
+
+def test_plan_guardrail_multi_role_writer_has_no_strong_signal(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "writer.py").write_text(
+        "# markdown report export helpers\n"
+        "def render_markdown(text):\n"
+        "    return 'md'\n"
+        "\n"
+        "def send_email(to, body):\n"
+        "    return True\n"
+        "\n"
+        "def save_database(row):\n"
+        "    return True\n"
+        "\n"
+        "def upload_s3(blob):\n"
+        "    return True\n",
+        encoding="utf-8",
+    )
+    result = analyze_plan(tmp_path, "Add PDF report export")
+    g = result.guardrail
+    assert _section(g, "Refactor:") == "no strong signal"
+    assert _section(g, "New dependency:") == "not justified"
