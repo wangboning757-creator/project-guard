@@ -336,8 +336,15 @@ def _build_guardrail(
         reuse += "."
     elif scope_paths:
         top = next(m for m in ranked_source if m.path == scope_paths[0])
-        kw = _capability_keyword(top, keywords, index)
-        if kw:
+        cli_owner = _cli_ownership(
+            top.path, keywords, entry_modules, index
+        )
+        if cli_owner:
+            reuse = (
+                f"Existing CLI entry point in {scope_paths[0]}. "
+                "Reuse it instead of creating a parallel mechanism."
+            )
+        elif kw := _capability_keyword(top, keywords, index):
             reuse = (
                 f"Existing {kw} implementation in {scope_paths[0]}. "
                 "Reuse it instead of creating a parallel mechanism."
