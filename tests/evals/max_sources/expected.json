@@ -1,0 +1,29 @@
+{
+  "goal": "Add a CLI option to limit the maximum number of sources used in a research run",
+  "recommended_scope_contains": [
+    "src/sample_app/cli.py"
+  ],
+  "recommended_scope_not_contains": [
+    "src/sample_app/search/base.py",
+    "src/sample_app/search/google.py",
+    "src/sample_app/search/bing.py"
+  ],
+  "possible_scope_contains": [
+    "src/sample_app/research_state.py",
+    "src/sample_app/workflow.py"
+  ],
+  "possible_scope_not_contains": [
+    "src/sample_app/search/base.py"
+  ],
+  "avoid_not_contains": [
+    "src/sample_app/workflow.py"
+  ],
+  "guardrail_not_contains": [
+    "new provider module"
+  ],
+  "suggestion_not_contains": [
+    "provider abstraction"
+  ],
+  "new_dependency": "not justified",
+  "duplication_risk": false
+}

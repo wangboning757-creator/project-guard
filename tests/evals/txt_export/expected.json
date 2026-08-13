@@ -1,0 +1,24 @@
+{
+  "goal": "Add optional plain-text .txt report export",
+  "recommended_scope_contains": [
+    "src/sample_app/writer.py"
+  ],
+  "recommended_scope_not_contains": [
+    "src/sample_app/models.py",
+    "src/sample_app/web/tasks.py"
+  ],
+  "possible_scope_contains": [
+    "src/sample_app/workflow.py",
+    "src/sample_app/cli.py"
+  ],
+  "possible_scope_not_contains": [
+    "src/sample_app/models.py",
+    "src/sample_app/web/tasks.py"
+  ],
+  "avoid_not_contains": [
+    "src/sample_app/workflow.py",
+    "src/sample_app/cli.py"
+  ],
+  "new_dependency": "not justified",
+  "duplication_risk": false
+}
