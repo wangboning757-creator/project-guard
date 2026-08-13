@@ -48,3 +48,14 @@ def test_scan_detects_large_file(tmp_path):
     (tmp_path / "big.py").write_text("z = 0\n" * 600, encoding="utf-8")
     scan = scan_project(tmp_path)
     assert [f.path for f in scan.large_files] == ["big.py"]
+
+
+def test_scan_size_checks_ignore_non_source_files(tmp_path):
+    (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "huge.py").write_text("x = 1\n" * 900, encoding="utf-8")
+    (tmp_path / "fixture.json").write_text("{}\n" * 900, encoding="utf-8")
+    (tmp_path / "image.png").write_text("x\n" * 900, encoding="utf-8")
+    (tmp_path / "README.md").write_text("# doc\n" * 900, encoding="utf-8")
+    scan = scan_project(tmp_path)
+    assert scan.largest_file.path == "huge.py"
+    assert [f.path for f in scan.large_files] == ["huge.py"]

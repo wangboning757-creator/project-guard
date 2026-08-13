@@ -25,10 +25,12 @@ def compute_score(
             ScoreDeduction(rule=rule, points=points, reason=reason)
         )
 
-    giant = [f for f in scan.files if f.lines >= VERY_LARGE_FILE_LINES]
+    giant = [
+        f for f in scan.python_files if f.lines >= VERY_LARGE_FILE_LINES
+    ]
     oversized = [
         f
-        for f in scan.files
+        for f in scan.python_files
         if LARGE_FILE_LINES <= f.lines < VERY_LARGE_FILE_LINES
     ]
     for f in giant[:3]:

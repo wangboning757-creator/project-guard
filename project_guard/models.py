@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel
 
-from .config import LARGE_FILE_LINES
+from .config import LARGE_FILE_LINES, SOURCE_EXTENSIONS
 
 
 class FileInfo(BaseModel):
@@ -39,15 +41,19 @@ class ScanResult(BaseModel):
 
     @property
     def python_files(self) -> list[FileInfo]:
-        return [f for f in self.files if f.path.endswith(".py")]
+        return [
+            f for f in self.files if Path(f.path).suffix in SOURCE_EXTENSIONS
+        ]
 
     @property
     def largest_file(self) -> FileInfo | None:
-        return self.files[0] if self.files else None
+        return self.python_files[0] if self.python_files else None
 
     @property
     def large_files(self) -> list[FileInfo]:
-        return [f for f in self.files if f.lines >= LARGE_FILE_LINES]
+        return [
+            f for f in self.python_files if f.lines >= LARGE_FILE_LINES
+        ]
 
 
 class PlanMatch(BaseModel):

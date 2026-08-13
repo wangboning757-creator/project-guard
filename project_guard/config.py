@@ -10,6 +10,7 @@ IGNORED_DIRS = {
 }
 LARGE_FILE_LINES = 500        # files above this are "oversized"
 VERY_LARGE_FILE_LINES = 800   # files above this are "giant"
+SOURCE_EXTENSIONS = {".py"}   # only these count as source for size checks
 MAX_TOP_DIRS = 8
 MAX_DEPTH = 6
 

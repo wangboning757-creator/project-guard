@@ -59,3 +59,17 @@ def test_score_common_filenames_across_dirs_are_not_penalized(tmp_path):
     assert not any(
         d.rule == "duplicate module name" for d in result.deductions
     )
+
+
+def test_score_size_penalties_ignore_non_source_files(tmp_path):
+    (tmp_path / "huge.py").write_text("x = 1\n" * 900, encoding="utf-8")
+    (tmp_path / "fixture.json").write_text("{}\n" * 900, encoding="utf-8")
+    (tmp_path / "image.png").write_text("x\n" * 900, encoding="utf-8")
+    (tmp_path / "README.md").write_text("# doc\n" * 900, encoding="utf-8")
+    result = compute_score(scan_project(tmp_path))
+    size_deductions = [
+        d
+        for d in result.deductions
+        if d.rule in ("giant file", "large file")
+    ]
+    assert [d.reason for d in size_deductions] == ["huge.py (900 lines)"]
