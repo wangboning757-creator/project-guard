@@ -141,10 +141,17 @@ def review(
         "--skill",
         help="Coding Skill file to exclude from review diff.",
     ),
+    task_contract: Path | None = typer.Option(
+        None,
+        "--task-contract",
+        help="Agent-maintained Task Contract JSON with approved scope "
+        "amendments",
+    ),
 ):
     """Analyze the current git diff for risk signals."""
     snapshot = None
     engineering_contract = None
+    task_contract_obj = None
     if contract is not None:
         try:
             engineering_contract = reviewer.load_engineering_contract(
@@ -160,11 +167,35 @@ def review(
         except reviewer.PlanSnapshotError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from exc
+    if task_contract is not None:
+        if engineering_contract is None:
+            typer.echo(
+                "Error: --task-contract requires --contract",
+                err=True,
+            )
+            raise typer.Exit(1)
+        try:
+            task_contract_obj = reviewer.load_task_contract(task_contract)
+        except reviewer.TaskContractError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        if (
+            task_contract_obj.original_request
+            != engineering_contract.original_request
+        ):
+            typer.echo("Task Contract mismatch:", err=True)
+            typer.echo(
+                "original_request does not match Guard Contract.",
+                err=True,
+            )
+            raise typer.Exit(1)
     exclude_paths: set[Path] = set()
     if plan is not None:
         exclude_paths.add(plan)
     if contract is not None:
         exclude_paths.add(contract)
+    if task_contract is not None:
+        exclude_paths.add(task_contract)
     for artifact in (instructions, skill):
         if artifact is not None:
             if not artifact.is_file():
@@ -183,7 +214,14 @@ def review(
         typer.echo(f"Error: not a git repository ({exc})", err=True)
         raise typer.Exit(1) from exc
     if snapshot is not None:
-        compliance = reviewer.check_plan_compliance(snapshot, result)
+        amendments = (
+            task_contract_obj.scope_amendments
+            if task_contract_obj is not None
+            else None
+        )
+        compliance = reviewer.check_plan_compliance(
+            snapshot, result, amendments=amendments
+        )
         reuse_warnings = reviewer.check_reuse_warnings(
             path, snapshot, result
         )
@@ -191,6 +229,7 @@ def review(
             compliance.reuse_warnings = reuse_warnings
             compliance.risk = reviewer.merge_risk(compliance.risk, "MEDIUM")
         final_risk = reviewer.merge_risk(result.risk, compliance.risk)
+        complexity = None
         if engineering_contract is not None:
             complexity = reviewer.check_complexity(
                 path, engineering_contract, result
@@ -203,7 +242,20 @@ def review(
             constraints = reviewer.build_remediation_constraints(
                 compliance, reuse_warnings
             )
-        typer.echo(reviewer.format_review(result, risk=final_risk))
+        extra_reasons: list[str] = []
+        if reuse_warnings:
+            extra_reasons.extend(reuse_warnings)
+        if complexity is not None and complexity.level == "MEDIUM":
+            extra_reasons.append("complexity signal: MEDIUM")
+        if compliance.risk in ("MEDIUM", "HIGH") and compliance.violations:
+            extra_reasons.extend(compliance.violations)
+        typer.echo(
+            reviewer.format_review(
+                result,
+                risk=final_risk,
+                extra_reasons=extra_reasons,
+            )
+        )
         typer.echo("")
         typer.echo(reviewer.format_plan_compliance(compliance))
         if engineering_contract is not None:

@@ -144,6 +144,31 @@ Then wait for user approval. Do not self-approve.
 Do not modify files listed under Do Not Modify unless a scope amendment
 is approved.
 
+Record every amendment in the Task Contract. An approved amendment is the
+only thing that expands the Guard Contract's allowed scope:
+
+```json
+{
+  "version": 1,
+  "requested_files": ["..."],
+  "reason": "...",
+  "safe_in_scope_alternative_exists": false,
+  "status": "approved"
+}
+```
+
+Status semantics:
+- `pending`: waiting for the user.
+- `approved`: only after explicit user approval.
+- `rejected`: the user declined.
+
+The agent must never change `pending` to `approved` on its own. Planning to
+modify a file (planned_production_files) is not user approval and does not
+expand the allowed scope.
+
+Task Contract amendment approval status must only be changed to `approved`
+after explicit user approval.
+
 # Priority
 
 1. Original User Request

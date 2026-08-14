@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .config import LARGE_FILE_LINES, SOURCE_EXTENSIONS
 
@@ -113,6 +113,10 @@ class PlanCompliance(BaseModel):
     violations: list[str] = []
     reuse_warnings: list[str] = []
     risk: str = "LOW"
+    original_allowed_scope: list[str] = []
+    approved_scope_amendments: list[str] = []
+    effective_allowed_scope: list[str] = []
+    avoid_overridden: list[str] = []
 
 
 class ComplexityBudget(BaseModel):
@@ -167,6 +171,25 @@ class ContractAmendment(BaseModel):
     reason: str = ""
     safe_in_scope_alternative_exists: bool = False
     status: str = "pending"  # pending / approved / rejected
+
+
+class TaskContract(BaseModel):
+    """Agent-maintained task-level contract (Coding Agent output).
+
+    Project Guard reads it for approved scope amendments only. Extra
+    informational fields written by the agent are ignored.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    version: int = 1
+    original_request: str
+    explicit_requirements: list[str] = []
+    engineering_inferences: list[str] = []
+    assumptions: list[str] = []
+    unresolved_questions: list[str] = []
+    planned_production_files: list[str] = []
+    scope_amendments: list[ContractAmendment] = []
 
 
 class RemediationConstraint(BaseModel):

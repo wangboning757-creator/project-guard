@@ -21,7 +21,7 @@ import subprocess
 from pathlib import Path
 
 from project_guard.instructions import format_instructions, skill_template_text
-from project_guard.models import EngineeringContract
+from project_guard.models import ContractAmendment, EngineeringContract
 from project_guard.planner import analyze_plan
 from project_guard.reviewer import (
     analyze_diff,
@@ -450,4 +450,72 @@ def test_e2e_contract_parallel_implementation_remediation(tmp_path):
         for c in constraints
     )
     risk = merge_risk(result.risk, "MEDIUM")
+    assert risk == "MEDIUM"
+
+
+def test_e2e_scope_amendment_approved(tmp_path):
+    """An approved scope amendment expands effective allowed scope."""
+    repo = _init_git_repo(DOMAIN_EXCLUSION_EVAL_DIR / "repo", tmp_path)
+    goal = _load_expected(DOMAIN_EXCLUSION_EVAL_DIR)["goal"]
+    snapshot = analyze_plan(repo, goal).snapshot
+    assert snapshot is not None
+    allowed = set(snapshot.recommended_scope) | set(snapshot.possible_scope)
+    assert "src/sample_app/natural_language.py" not in allowed
+
+    _append(repo / "src/sample_app/cli.py", "\n\n# cli change\n")
+    _append(
+        repo / "src/sample_app/natural_language.py",
+        "\n\ndef _domain_tokens(self):\n    return []\n",
+    )
+    result = analyze_diff(repo)
+    amendments = [
+        ContractAmendment(
+            requested_files=["src/sample_app/natural_language.py"],
+            reason="domain tokens live in natural language helper",
+            safe_in_scope_alternative_exists=False,
+            status="approved",
+        )
+    ]
+    compliance = check_plan_compliance(
+        snapshot, result, amendments=amendments
+    )
+    assert compliance.status == "PASS"
+    assert (
+        "src/sample_app/natural_language.py"
+        in compliance.approved_scope_amendments
+    )
+    risk = merge_risk(result.risk, compliance.risk)
+    assert risk == "LOW"
+
+
+def test_e2e_scope_amendment_pending(tmp_path):
+    """A pending amendment does not expand scope."""
+    repo = _init_git_repo(DOMAIN_EXCLUSION_EVAL_DIR / "repo", tmp_path)
+    goal = _load_expected(DOMAIN_EXCLUSION_EVAL_DIR)["goal"]
+    snapshot = analyze_plan(repo, goal).snapshot
+    assert snapshot is not None
+
+    _append(repo / "src/sample_app/cli.py", "\n\n# cli change\n")
+    _append(
+        repo / "src/sample_app/natural_language.py",
+        "\n\ndef _domain_tokens(self):\n    return []\n",
+    )
+    result = analyze_diff(repo)
+    amendments = [
+        ContractAmendment(
+            requested_files=["src/sample_app/natural_language.py"],
+            reason="domain tokens live in natural language helper",
+            safe_in_scope_alternative_exists=False,
+            status="pending",
+        )
+    ]
+    compliance = check_plan_compliance(
+        snapshot, result, amendments=amendments
+    )
+    assert compliance.status == "WARNING"
+    assert any(
+        "Unplanned production file: src/sample_app/natural_language.py" in v
+        for v in compliance.violations
+    )
+    risk = merge_risk(result.risk, compliance.risk)
     assert risk == "MEDIUM"

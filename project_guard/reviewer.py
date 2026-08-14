@@ -17,12 +17,14 @@ from .config import (
     LARGE_FILE_LINES,
 )
 from .models import (
+    ContractAmendment,
     ComplexitySignal,
     EngineeringContract,
     PlanCompliance,
     PlanSnapshot,
     RemediationConstraint,
     ReviewResult,
+    TaskContract,
 )
 from .planner import (
     MIN_EVIDENCE_TOKEN_MATCHES,
@@ -46,6 +48,10 @@ class PlanSnapshotError(RuntimeError):
 
 
 class ContractError(RuntimeError):
+    pass
+
+
+class TaskContractError(RuntimeError):
     pass
 
 
@@ -113,6 +119,37 @@ def contract_to_snapshot(
         refactor=contract.refactor,
         existing_capability_files=contract.existing_capability_files,
     )
+
+
+def load_task_contract(path: Path) -> TaskContract:
+    if not path.is_file():
+        raise TaskContractError(f"task contract file not found: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise TaskContractError(
+            f"cannot parse task contract file {path}: {exc}"
+        ) from exc
+    if data.get("version") != 1:
+        raise TaskContractError(
+            f"unsupported task contract version: {data.get('version')!r} "
+            "(expected 1)"
+        )
+    try:
+        return TaskContract.model_validate(data)
+    except ValidationError as exc:
+        raise TaskContractError(
+            f"invalid task contract: {exc.errors()}"
+        ) from exc
+
+
+def approved_amendment_files(task_contract: TaskContract) -> list[str]:
+    """Files approved by the user via status == \"approved\" amendments."""
+    files: list[str] = []
+    for amendment in task_contract.scope_amendments:
+        if amendment.status == "approved":
+            files.extend(amendment.requested_files)
+    return files
 
 
 def _is_test_path(rel: str) -> bool:
@@ -322,8 +359,16 @@ def analyze_diff(
 
 
 def format_review(
-    result: ReviewResult, risk: str | None = None
+    result: ReviewResult,
+    risk: str | None = None,
+    extra_reasons: list[str] | None = None,
 ) -> str:
+    reasons = list(result.reasons)
+    if extra_reasons:
+        reasons = [
+            r for r in reasons if r != "no significant risk signals"
+        ]
+        reasons.extend(extra_reasons)
     lines = [
         f"Git diff review: {result.changed_files} file(s) changed "
         f"(+{result.total_added}/-{result.total_deleted})",
@@ -335,7 +380,7 @@ def format_review(
         "",
         "Reasons:",
     ]
-    lines.extend(f"  - {r}" for r in result.reasons)
+    lines.extend(f"  - {r}" for r in reasons)
     for label, items in (
         ("Large file additions:", result.large_file_additions),
         ("Suspected duplicated modules:", result.duplicated_modules),
@@ -348,10 +393,20 @@ def format_review(
 
 
 def check_plan_compliance(
-    snapshot: PlanSnapshot, result: ReviewResult
+    snapshot: PlanSnapshot,
+    result: ReviewResult,
+    amendments: list[ContractAmendment] | None = None,
 ) -> PlanCompliance:
     allowed = set(snapshot.recommended_scope) | set(snapshot.possible_scope)
     avoid = set(snapshot.avoid_modifying)
+    approved_files: list[str] = []
+    if amendments:
+        for amendment in amendments:
+            if amendment.status == "approved":
+                approved_files.extend(amendment.requested_files)
+    approved_set = set(approved_files)
+    effective_allowed = allowed | approved_set
+    effective_avoid = avoid - approved_set
     production = [
         p
         for p in result.changed_paths
@@ -362,13 +417,17 @@ def check_plan_compliance(
     status = "PASS"
     risk = "LOW"
 
-    avoid_hits = [p for p in production if p in avoid]
+    avoid_hits = [p for p in production if p in effective_avoid]
     for p in avoid_hits:
         violations.append(f"Modified explicitly avoided file: {p}")
         status = "VIOLATION"
         risk = "HIGH"
 
-    unplanned = [p for p in production if p not in allowed and p not in avoid_hits]
+    unplanned = [
+        p
+        for p in production
+        if p not in effective_allowed and p not in avoid_hits
+    ]
     for p in unplanned:
         violations.append(f"Unplanned production file: {p}")
     if len(unplanned) >= 2:
@@ -404,6 +463,10 @@ def check_plan_compliance(
         actual_changes=production,
         violations=violations,
         risk=risk,
+        original_allowed_scope=sorted(allowed),
+        approved_scope_amendments=sorted(approved_set),
+        effective_allowed_scope=sorted(effective_allowed),
+        avoid_overridden=sorted(approved_set & avoid),
     )
 
 
@@ -706,11 +769,31 @@ def format_plan_compliance(compliance: PlanCompliance) -> str:
         "Goal:",
         compliance.goal,
         "",
-        "Allowed production scope:",
     ]
-    lines += [f"- {p}" for p in compliance.allowed_scope] or ["- none"]
+    if compliance.approved_scope_amendments:
+        lines.append("Original allowed production scope:")
+        lines += (
+            [f"- {p}" for p in compliance.original_allowed_scope]
+            or ["- none"]
+        )
+        lines += ["", "Approved scope amendments:"]
+        lines += [f"- {p}" for p in compliance.approved_scope_amendments]
+        lines += ["", "Effective allowed production scope:"]
+        lines += (
+            [f"- {p}" for p in compliance.effective_allowed_scope]
+            or ["- none"]
+        )
+    else:
+        lines.append("Allowed production scope:")
+        lines += [f"- {p}" for p in compliance.allowed_scope] or ["- none"]
     lines += ["", "Actual production changes:"]
     lines += [f"- {p}" for p in compliance.actual_changes] or ["- none"]
+    if compliance.avoid_overridden:
+        lines += [
+            "",
+            "Approved amendment overrides original Do Not Modify boundary:",
+        ]
+        lines += [f"- {p}" for p in compliance.avoid_overridden]
     if compliance.violations:
         lines += ["", "Violations:"]
         lines += [f"- {v}" for v in compliance.violations]

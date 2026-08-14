@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -5,15 +6,19 @@ import pytest
 
 from project_guard.models import (
     ComplexityBudget,
+    ContractAmendment,
     EngineeringContract,
     PlanCompliance,
     PlanSnapshot,
+    TaskContract,
 )
 from project_guard.reviewer import (
     ContractError,
     NotAGitRepoError,
     PlanSnapshotError,
+    TaskContractError,
     analyze_diff,
+    approved_amendment_files,
     build_remediation_constraints,
     check_complexity,
     check_plan_compliance,
@@ -22,6 +27,7 @@ from project_guard.reviewer import (
     contract_to_snapshot,
     load_engineering_contract,
     load_plan_snapshot,
+    load_task_contract,
 )
 
 DOMAIN_GOAL = (
@@ -651,3 +657,169 @@ def test_remediation_constraints_from_violations_and_warnings():
         if "transport.py" in c.requires_scope_amendment
     ]
     assert unplanned
+
+
+def _plain_plan(**overrides) -> PlanSnapshot:
+    base = dict(
+        goal="x",
+        recommended_scope=["app.py"],
+        possible_scope=[],
+        avoid_modifying=[],
+        new_dependency="not justified",
+        new_abstraction="not justified",
+        refactor="not justified",
+    )
+    base.update(overrides)
+    return PlanSnapshot(**base)
+
+
+def _amendment(status: str = "approved") -> ContractAmendment:
+    return ContractAmendment(
+        requested_files=["workflow.py"],
+        reason="workflow owns stop decision",
+        safe_in_scope_alternative_exists=False,
+        status=status,
+    )
+
+
+def test_review_approved_scope_amendment_allows_file(repo):
+    (repo / "app.py").write_text(
+        "print('hi')\nprint('bye')\n", encoding="utf-8"
+    )
+    (repo / "workflow.py").write_text("x = 1\n", encoding="utf-8")
+    result = analyze_diff(repo)
+    compliance = check_plan_compliance(
+        _plain_plan(), result, amendments=[_amendment()]
+    )
+    assert compliance.status == "PASS"
+    assert "workflow.py" in compliance.approved_scope_amendments
+    assert "workflow.py" in compliance.effective_allowed_scope
+    assert not any(
+        "Unplanned production file: workflow.py" in v
+        for v in compliance.violations
+    )
+    constraints = build_remediation_constraints(compliance, [])
+    assert not any(
+        c.finding_type == "scope_violation" for c in constraints
+    )
+
+
+def test_review_pending_scope_amendment_does_not_expand_scope(repo):
+    (repo / "app.py").write_text(
+        "print('hi')\nprint('bye')\n", encoding="utf-8"
+    )
+    (repo / "workflow.py").write_text("x = 1\n", encoding="utf-8")
+    result = analyze_diff(repo)
+    compliance = check_plan_compliance(
+        _plain_plan(), result, amendments=[_amendment(status="pending")]
+    )
+    assert compliance.status == "WARNING"
+    assert any(
+        "Unplanned production file: workflow.py" in v
+        for v in compliance.violations
+    )
+    constraints = build_remediation_constraints(compliance, [])
+    assert any(
+        c.finding_type == "scope_violation" for c in constraints
+    )
+
+
+def test_review_rejected_scope_amendment_does_not_expand_scope(repo):
+    (repo / "app.py").write_text(
+        "print('hi')\nprint('bye')\n", encoding="utf-8"
+    )
+    (repo / "workflow.py").write_text("x = 1\n", encoding="utf-8")
+    result = analyze_diff(repo)
+    compliance = check_plan_compliance(
+        _plain_plan(), result, amendments=[_amendment(status="rejected")]
+    )
+    assert compliance.status == "WARNING"
+    assert any(
+        "Unplanned production file: workflow.py" in v
+        for v in compliance.violations
+    )
+
+
+def test_review_amendment_overrides_avoid(repo):
+    (repo / "workflow.py").write_text("x = 1\n", encoding="utf-8")
+    result = analyze_diff(repo)
+    compliance = check_plan_compliance(
+        _plain_plan(avoid_modifying=["workflow.py"]),
+        result,
+        amendments=[_amendment()],
+    )
+    assert compliance.status == "PASS"
+    assert "workflow.py" in compliance.avoid_overridden
+    assert not any(
+        "Modified explicitly avoided file" in v
+        for v in compliance.violations
+    )
+
+
+def test_task_contract_planned_files_do_not_expand_scope(repo):
+    (repo / "app.py").write_text(
+        "print('hi')\nprint('bye')\n", encoding="utf-8"
+    )
+    (repo / "workflow.py").write_text("x = 1\n", encoding="utf-8")
+    path = repo / "task.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "original_request": "x",
+                "planned_production_files": ["workflow.py"],
+                "scope_amendments": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    task = load_task_contract(path)
+    assert approved_amendment_files(task) == []
+    result = analyze_diff(repo)
+    compliance = check_plan_compliance(
+        _plain_plan(), result, amendments=task.scope_amendments
+    )
+    assert compliance.status == "WARNING"
+    assert any(
+        "Unplanned production file: workflow.py" in v
+        for v in compliance.violations
+    )
+
+
+def test_load_task_contract_errors(tmp_path):
+    with pytest.raises(TaskContractError):
+        load_task_contract(tmp_path / "missing.json")
+
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    with pytest.raises(TaskContractError):
+        load_task_contract(bad)
+
+    version = tmp_path / "version.json"
+    version.write_text('{"version": 2}', encoding="utf-8")
+    with pytest.raises(TaskContractError):
+        load_task_contract(version)
+
+    missing = tmp_path / "missing_field.json"
+    missing.write_text('{"version": 1}', encoding="utf-8")
+    with pytest.raises(TaskContractError):
+        load_task_contract(missing)
+
+
+def test_task_contract_extra_fields_ignored(tmp_path):
+    path = tmp_path / "task.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "original_request": "x",
+                "planned_test_files": ["tests/test_x.py"],
+                "ambiguity_check": {"ambiguous": False},
+                "scope_amendments": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    task = load_task_contract(path)
+    assert task.original_request == "x"
+    assert isinstance(task, TaskContract)
