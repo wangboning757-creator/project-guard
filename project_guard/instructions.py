@@ -15,6 +15,34 @@ def skill_template_text() -> str:
     return SKILL_TEMPLATE.read_text(encoding="utf-8")
 
 
+def format_agent_prompt(
+    instructions_path: str | Path = ".project-guard-instructions.md",
+    task_contract_path: str | Path = ".project-guard-task-contract.json",
+) -> str:
+    """Short, deterministic handoff prompt for the Coding Agent."""
+    return "\n".join(
+        [
+            "Implement the prepared user request in this repository.",
+            "",
+            f"Read and follow `{instructions_path}`.",
+            "",
+            f"Before modifying production code, create or update "
+            f"`{task_contract_path}` as required by the Coding Skill.",
+            "",
+            "If the user request has a materially ambiguous user-visible "
+            "interpretation, stop and ask the user before coding.",
+            "",
+            "If a production file outside the Guard Contract is genuinely "
+            "required, stop and request a Scope Amendment before modifying "
+            "it.",
+            "",
+            "Use the Smallest Safe Change.",
+            "",
+            "Do not commit.",
+        ]
+    ) + "\n"
+
+
 def _bullet_list(items: list[str]) -> str:
     if not items:
         return EMPTY_SCOPE_TEXT

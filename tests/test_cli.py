@@ -422,3 +422,86 @@ def test_review_task_contract_unsupported_version(tmp_path):
     )
     assert result.exit_code == 1
     assert "unsupported task contract version" in result.output
+
+
+def test_prepare_happy_path(tmp_path):
+    (tmp_path / "main.py").write_text("print(1)\n", encoding="utf-8")
+    result = runner.invoke(app, ["prepare", str(tmp_path), "Add PDF export"])
+    assert result.exit_code == 0
+    for name in (
+        ".project-guard-plan.json",
+        ".project-guard-contract.json",
+        ".project-guard-instructions.md",
+        ".project-guard-skill.md",
+        ".project-guard-agent-prompt.md",
+    ):
+        assert (tmp_path / name).is_file()
+    assert not (tmp_path / ".project-guard-task-contract.json").exists()
+    assert "Project Guard task prepared." in result.output
+    assert "Agent handoff:" in result.output
+    assert ".project-guard-agent-prompt.md" in result.output
+
+
+def test_prepare_artifacts_match_plan_explicit_outputs(tmp_path):
+    (tmp_path / "main.py").write_text("print(1)\n", encoding="utf-8")
+    goal = "Add PDF export"
+    plan_json = tmp_path / "p.json"
+    contract_json = tmp_path / "c.json"
+    inst = tmp_path / "i.md"
+    plan_result = runner.invoke(
+        app,
+        [
+            "plan",
+            str(tmp_path),
+            goal,
+            "--output-plan",
+            str(plan_json),
+            "--output-contract",
+            str(contract_json),
+            "--output-instructions",
+            str(inst),
+        ],
+    )
+    assert plan_result.exit_code == 0
+
+    prepare_result = runner.invoke(
+        app, ["prepare", str(tmp_path), goal]
+    )
+    assert prepare_result.exit_code == 0
+    assert (
+        (tmp_path / ".project-guard-plan.json").read_text(
+            encoding="utf-8"
+        )
+        == plan_json.read_text(encoding="utf-8")
+    )
+    assert (
+        (tmp_path / ".project-guard-contract.json").read_text(
+            encoding="utf-8"
+        )
+        == contract_json.read_text(encoding="utf-8")
+    )
+    assert (
+        (tmp_path / ".project-guard-instructions.md").read_text(
+            encoding="utf-8"
+        )
+        == inst.read_text(encoding="utf-8")
+    )
+    from project_guard.instructions import skill_template_text
+
+    assert (
+        (tmp_path / ".project-guard-skill.md").read_text(
+            encoding="utf-8"
+        )
+        == skill_template_text()
+    )
+
+
+def test_prepare_does_not_touch_task_contract(tmp_path):
+    (tmp_path / "main.py").write_text("print(1)\n", encoding="utf-8")
+    task = tmp_path / ".project-guard-task-contract.json"
+    original = '{"version": 1, "original_request": "old"}'
+    task.write_text(original, encoding="utf-8")
+    result = runner.invoke(app, ["prepare", str(tmp_path), "Add PDF export"])
+    assert result.exit_code == 0
+    assert task.read_text(encoding="utf-8") == original
+    assert "agent-owned and was left unchanged" in result.output

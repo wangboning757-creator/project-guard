@@ -1,4 +1,5 @@
 from project_guard.instructions import (
+    format_agent_prompt,
     format_instructions,
     skill_template_text,
 )
@@ -116,3 +117,23 @@ def test_skill_template_is_generic():
         "domain exclusion",
     ):
         assert forbidden.lower() not in text.lower()
+
+
+def test_format_agent_prompt():
+    text = format_agent_prompt()
+    for fragment in (
+        ".project-guard-instructions.md",
+        ".project-guard-task-contract.json",
+        "Smallest Safe Change",
+        "Scope Amendment",
+        "Do not commit",
+    ):
+        assert fragment in text
+    for forbidden in (
+        "# Requirement Fidelity",
+        "# Task Normalization",
+        "recommended_scope",
+        "Repository Facts",
+        "Complexity Budget",
+    ):
+        assert forbidden not in text

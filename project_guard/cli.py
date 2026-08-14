@@ -16,6 +16,14 @@ app = typer.Typer(
 )
 
 
+def _write_artifact(path: Path, content: str, label: str) -> None:
+    try:
+        path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        typer.echo(f"Error: cannot write {label}: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+
 @app.command()
 def inspect(path: Path = typer.Argument(".", help="Project directory")):
     """Analyze a project and print a health report."""
@@ -63,40 +71,29 @@ def plan(
         if snapshot is None:
             typer.echo("Error: no plan snapshot available", err=True)
             raise typer.Exit(1)
-        try:
-            output_plan.write_text(
-                snapshot.model_dump_json(indent=2) + "\n",
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            typer.echo(f"Error: cannot write plan snapshot: {exc}", err=True)
-            raise typer.Exit(1) from exc
+        _write_artifact(
+            output_plan,
+            snapshot.model_dump_json(indent=2) + "\n",
+            "plan snapshot",
+        )
         typer.echo(f"Plan snapshot written to {output_plan}")
     if output_contract is not None:
         contract = result.contract
         if contract is None:
             typer.echo("Error: no engineering contract available", err=True)
             raise typer.Exit(1)
-        try:
-            output_contract.write_text(
-                contract.model_dump_json(indent=2) + "\n",
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            typer.echo(
-                f"Error: cannot write engineering contract: {exc}", err=True
-            )
-            raise typer.Exit(1) from exc
+        _write_artifact(
+            output_contract,
+            contract.model_dump_json(indent=2) + "\n",
+            "engineering contract",
+        )
         typer.echo(f"Engineering contract written to {output_contract}")
     if output_skill is not None:
-        try:
-            output_skill.write_text(
-                instructions.skill_template_text(),
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            typer.echo(f"Error: cannot write coding skill: {exc}", err=True)
-            raise typer.Exit(1) from exc
+        _write_artifact(
+            output_skill,
+            instructions.skill_template_text(),
+            "coding skill",
+        )
         typer.echo(f"Coding skill written to {output_skill}")
     if output_instructions is not None:
         contract = result.contract
@@ -104,18 +101,85 @@ def plan(
             typer.echo("Error: no engineering contract available", err=True)
             raise typer.Exit(1)
         skill_path = output_skill or Path(".project-guard-skill.md")
-        try:
-            output_instructions.write_text(
-                instructions.format_instructions(contract, skill_path),
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            typer.echo(
-                f"Error: cannot write agent instructions: {exc}", err=True
-            )
-            raise typer.Exit(1) from exc
+        _write_artifact(
+            output_instructions,
+            instructions.format_instructions(contract, skill_path),
+            "agent instructions",
+        )
         typer.echo(f"Agent instructions written to {output_instructions}")
     typer.echo(planner.format_plan(result))
+
+
+@app.command()
+def prepare(
+    path: Path = typer.Argument(".", help="Project directory"),
+    request: str = typer.Argument(
+        ..., help="Feature request to prepare for a Coding Agent"
+    ),
+):
+    """Prepare guard artifacts and an agent-ready handoff for a request."""
+    result = planner.analyze_plan(path, request)
+    snapshot = result.snapshot
+    contract = result.contract
+    if snapshot is None or contract is None:
+        typer.echo("Error: no plan/contract available", err=True)
+        raise typer.Exit(1)
+    root = Path(path)
+    _write_artifact(
+        root / ".project-guard-plan.json",
+        snapshot.model_dump_json(indent=2) + "\n",
+        "plan snapshot",
+    )
+    _write_artifact(
+        root / ".project-guard-contract.json",
+        contract.model_dump_json(indent=2) + "\n",
+        "engineering contract",
+    )
+    _write_artifact(
+        root / ".project-guard-instructions.md",
+        instructions.format_instructions(
+            contract, ".project-guard-skill.md"
+        ),
+        "agent instructions",
+    )
+    _write_artifact(
+        root / ".project-guard-skill.md",
+        instructions.skill_template_text(),
+        "coding skill",
+    )
+    _write_artifact(
+        root / ".project-guard-agent-prompt.md",
+        instructions.format_agent_prompt(),
+        "agent prompt",
+    )
+
+    task_contract_path = root / ".project-guard-task-contract.json"
+    if task_contract_path.is_file():
+        typer.echo("Existing Task Contract detected.")
+        typer.echo("It is agent-owned and was left unchanged.")
+        typer.echo(
+            "Ensure the Coding Agent updates it for the new request "
+            "before coding."
+        )
+        typer.echo("")
+
+    typer.echo("Project Guard task prepared.")
+    typer.echo("")
+    typer.echo("Request:")
+    typer.echo(request)
+    typer.echo("")
+    typer.echo("Generated:")
+    for name in (
+        ".project-guard-plan.json",
+        ".project-guard-contract.json",
+        ".project-guard-instructions.md",
+        ".project-guard-skill.md",
+        ".project-guard-agent-prompt.md",
+    ):
+        typer.echo(f"- {name}")
+    typer.echo("")
+    typer.echo("Agent handoff:")
+    typer.echo(".project-guard-agent-prompt.md")
 
 
 @app.command()
