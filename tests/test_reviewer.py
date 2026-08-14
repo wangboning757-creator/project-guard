@@ -3,13 +3,24 @@ from pathlib import Path
 
 import pytest
 
-from project_guard.models import PlanSnapshot
+from project_guard.models import (
+    ComplexityBudget,
+    EngineeringContract,
+    PlanCompliance,
+    PlanSnapshot,
+)
 from project_guard.reviewer import (
+    ContractError,
     NotAGitRepoError,
     PlanSnapshotError,
     analyze_diff,
+    build_remediation_constraints,
+    check_complexity,
     check_plan_compliance,
+    check_requirement_fidelity,
     check_reuse_warnings,
+    contract_to_snapshot,
+    load_engineering_contract,
     load_plan_snapshot,
 )
 
@@ -447,3 +458,171 @@ def test_load_plan_snapshot_without_capability_field(tmp_path):
     )
     snap = load_plan_snapshot(path)
     assert snap.existing_capability_files == []
+
+
+def test_load_engineering_contract_errors(tmp_path):
+    with pytest.raises(ContractError):
+        load_engineering_contract(tmp_path / "missing.json")
+
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ContractError):
+        load_engineering_contract(bad)
+
+    version = tmp_path / "version.json"
+    version.write_text('{"version": 2}', encoding="utf-8")
+    with pytest.raises(ContractError):
+        load_engineering_contract(version)
+
+    missing = tmp_path / "missing_field.json"
+    missing.write_text('{"version": 1}', encoding="utf-8")
+    with pytest.raises(ContractError):
+        load_engineering_contract(missing)
+
+
+def test_engineering_contract_json_round_trip(tmp_path):
+    contract = EngineeringContract(
+        original_request="Add a CLI option",
+        explicit_requirements=["Add a CLI option"],
+        recommended_scope=["app.py"],
+        possible_scope=["workflow.py"],
+        avoid_modifying=["writer.py"],
+        existing_capability_files=["search/tavily.py"],
+        new_dependency="not justified",
+        new_abstraction="not justified",
+        refactor="not justified",
+    )
+    path = tmp_path / "contract.json"
+    path.write_text(contract.model_dump_json(indent=2), encoding="utf-8")
+    loaded = load_engineering_contract(path)
+    assert loaded == contract
+    snapshot = contract_to_snapshot(loaded)
+    assert snapshot.recommended_scope == ["app.py"]
+    assert snapshot.existing_capability_files == ["search/tavily.py"]
+
+
+def _contract_for_repo(**overrides) -> EngineeringContract:
+    base = dict(
+        original_request="Add a CLI option",
+        explicit_requirements=["Add a CLI option"],
+        inferred_requirements=[],
+        assumptions=[],
+        unresolved_questions=[],
+        repository_facts=[],
+        recommended_scope=["app.py"],
+        possible_scope=[],
+        avoid_modifying=[],
+        existing_capability_files=[],
+        new_dependency="not justified",
+        new_abstraction="not justified",
+        refactor="not justified",
+        complexity_budget=ComplexityBudget(),
+        testing_policy="",
+    )
+    base.update(overrides)
+    return EngineeringContract(**base)
+
+
+def test_complexity_within_budget_stays_low(repo):
+    (repo / "workflow.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add workflow")
+    (repo / "app.py").write_text(
+        "print('hi')\nprint('bye')\n", encoding="utf-8"
+    )
+    (repo / "workflow.py").write_text("x = 2\n", encoding="utf-8")
+    result = analyze_diff(repo)
+    signal = check_complexity(repo, _contract_for_repo(), result)
+    assert signal.level == "LOW"
+    assert signal.touched_production_files == 2
+
+
+def test_complexity_new_classes_is_medium(repo):
+    (repo / "app.py").write_text(
+        "print('hi')\n"
+        "class Alpha:\n"
+        "    pass\n"
+        "class Beta:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    result = analyze_diff(repo)
+    signal = check_complexity(repo, _contract_for_repo(), result)
+    assert signal.level == "MEDIUM"
+    assert signal.new_top_level_classes == 2
+
+
+def test_complexity_new_production_file_is_medium(repo):
+    (repo / "extra.py").write_text("x = 1\n", encoding="utf-8")
+    result = analyze_diff(repo)
+    signal = check_complexity(repo, _contract_for_repo(), result)
+    assert signal.level == "MEDIUM"
+    assert signal.new_production_files == 1
+
+
+def test_requirement_fidelity_no_conflict(repo):
+    (repo / "app.py").write_text(
+        "print('hi')\nprint('bye')\n", encoding="utf-8"
+    )
+    result = analyze_diff(repo)
+    assert (
+        check_requirement_fidelity(_contract_for_repo(), result)
+        == "NO STRUCTURAL CONFLICT FOUND"
+    )
+
+
+def test_requirement_fidelity_unresolved_questions(repo):
+    (repo / "app.py").write_text(
+        "print('hi')\nprint('bye')\n", encoding="utf-8"
+    )
+    contract = _contract_for_repo(
+        unresolved_questions=["Should this apply to the web interface?"]
+    )
+    result = analyze_diff(repo)
+    assert (
+        check_requirement_fidelity(contract, result)
+        == "NEEDS HUMAN CONFIRMATION"
+    )
+
+
+def test_requirement_fidelity_unrelated_changes(repo):
+    (repo / "other.py").write_text("x = 1\n", encoding="utf-8")
+    result = analyze_diff(repo)
+    assert (
+        check_requirement_fidelity(_contract_for_repo(), result)
+        == "NEEDS HUMAN CONFIRMATION"
+    )
+
+
+def test_remediation_constraints_from_violations_and_warnings():
+    compliance = PlanCompliance(
+        status="VIOLATION",
+        risk="HIGH",
+        violations=[
+            "Modified explicitly avoided file: models.py",
+            "Unplanned production file: transport.py",
+        ],
+    )
+    constraints = build_remediation_constraints(
+        compliance,
+        [
+            "possible duplicate implementation: new `X` in cli.py "
+            "overlaps existing capability in search/tavily.py"
+        ],
+    )
+    assert any(
+        c.finding_type == "duplicate_implementation"
+        for c in constraints
+    )
+    avoid = [
+        c
+        for c in constraints
+        if "models.py" in c.requires_scope_amendment
+    ]
+    assert avoid and avoid[0].severity == "high"
+    unplanned = [
+        c
+        for c in constraints
+        if "transport.py" in c.requires_scope_amendment
+    ]
+    assert unplanned

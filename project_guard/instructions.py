@@ -1,43 +1,50 @@
-"""Deterministic agent instructions generated from a PlanSnapshot."""
+"""Deterministic agent instructions generated from an EngineeringContract."""
 
 from __future__ import annotations
 
-from .models import PlanSnapshot
+from pathlib import Path
+
+from .models import EngineeringContract
 
 EMPTY_SCOPE_TEXT = "None identified."
-NO_AVOID_TEXT = "No explicit avoid list."
+SKILL_TEMPLATE = Path(__file__).parent / "templates" / "coding_skill.md"
 
 
-def _bullet_list(items: list[str], empty_text: str) -> str:
+def skill_template_text() -> str:
+    """Return the fixed, generic Coding Skill template."""
+    return SKILL_TEMPLATE.read_text(encoding="utf-8")
+
+
+def _bullet_list(items: list[str]) -> str:
     if not items:
-        return empty_text
+        return EMPTY_SCOPE_TEXT
     return "\n".join(f"- {item}" for item in items)
 
 
-def _dependency_constraint(value: str) -> str:
+def _dependency_rule(value: str) -> str:
     if value == "not justified":
         return (
             "Do not add new dependencies unless the goal cannot be completed "
             "safely without one. Stop and explain first."
         )
     return (
-        f"New dependencies are {value} by the plan; do not add any without "
-        "explaining why they are required."
+        f"New dependencies are {value} by the contract; do not add any "
+        "without explaining why they are required."
     )
 
 
-def _abstraction_constraint(value: str) -> str:
+def _abstraction_rule(value: str) -> str:
     if value == "not justified":
         return "Do not introduce a new abstraction."
     if value.startswith("reuse existing"):
         return f"Reuse existing structure: {value}."
     return (
-        f"New abstraction is {value} by the plan; do not create one without "
-        "explaining why."
+        f"New abstraction is {value} by the contract; do not create one "
+        "without explaining why."
     )
 
 
-def _refactor_constraint(value: str) -> str:
+def _refactor_rule(value: str) -> str:
     if value == "not justified":
         return "Do not perform unrelated refactoring."
     if value == "no strong signal":
@@ -46,96 +53,87 @@ def _refactor_constraint(value: str) -> str:
             "code."
         )
     return (
-        f"Refactoring is {value} by the plan; only perform it when required "
-        "and explain why."
+        f"Refactoring is {value} by the contract; only perform it when "
+        "required and explain why."
     )
 
 
-def format_instructions(snapshot: PlanSnapshot) -> str:
-    """Render a PlanSnapshot as a deterministic agent instructions contract."""
-    goal = snapshot.goal.strip()
-    if goal and not goal.endswith("."):
-        goal += "."
+def format_instructions(
+    contract: EngineeringContract,
+    skill_path: str | Path = ".project-guard-skill.md",
+) -> str:
+    """Render an EngineeringContract as task-specific agent instructions."""
+    budget = contract.complexity_budget
     lines = [
-        "# Project Guard Agent Instructions",
+        "# Original User Request",
         "",
-        "## Goal",
+        contract.original_request,
         "",
-        goal,
+        "# Engineering Contract",
         "",
-        "## Change Boundary",
+        "## Explicit Requirements",
         "",
-        "### Recommended scope",
+        _bullet_list(contract.explicit_requirements),
         "",
-        _bullet_list(snapshot.recommended_scope, EMPTY_SCOPE_TEXT),
+        "## Engineering Inferences",
         "",
-        "### Possible scope",
+        _bullet_list(contract.inferred_requirements),
         "",
-        _bullet_list(snapshot.possible_scope, EMPTY_SCOPE_TEXT),
+        "## Assumptions",
         "",
-        "### Do not modify",
+        _bullet_list(contract.assumptions),
         "",
-        _bullet_list(snapshot.avoid_modifying, NO_AVOID_TEXT),
+        "## Unresolved Questions",
         "",
-        "## Engineering Constraints",
+        _bullet_list(contract.unresolved_questions),
         "",
-        f"- {_dependency_constraint(snapshot.new_dependency)}",
-        f"- {_abstraction_constraint(snapshot.new_abstraction)}",
-        f"- {_refactor_constraint(snapshot.refactor)}",
+        "## Repository Facts",
+        "",
+        _bullet_list(contract.repository_facts),
+        "",
+        "## Recommended Scope",
+        "",
+        _bullet_list(contract.recommended_scope),
+        "",
+        "## Possible Scope",
+        "",
+        _bullet_list(contract.possible_scope),
+        "",
+        "## Do Not Modify",
+        "",
+        _bullet_list(contract.avoid_modifying),
+        "",
+        "## Existing Capabilities",
+        "",
+        _bullet_list(contract.existing_capability_files),
+        "",
+        "## Complexity Budget",
+        "",
+        f"- preferred new production files: "
+        f"{budget.preferred_new_production_files}",
+        f"- preferred new abstractions: "
+        f"{budget.preferred_new_abstractions}",
+        f"- preferred new dependencies: "
+        f"{budget.preferred_new_dependencies}",
+        f"- preferred max touched production files: "
+        f"{budget.preferred_max_touched_production_files}",
+        "",
+        "## Dependency / Abstraction / Refactor Rules",
+        "",
+        f"- {_dependency_rule(contract.new_dependency)}",
+        f"- {_abstraction_rule(contract.new_abstraction)}",
+        f"- {_refactor_rule(contract.refactor)}",
         "- Reuse existing project structure before creating new mechanisms.",
         "",
-        "## Scope Rules",
+        "## Testing Policy",
         "",
-        "- Start from the recommended scope.",
-        "- Possible scope means \"modify only if necessary\", not \"modify "
-        "all of these files\".",
-        "- Do not modify files in \"Do not modify\" unless the current goal "
-        "cannot be completed safely without them.",
-        "- Do not modify unrelated production files.",
+        contract.testing_policy,
         "",
-        "If a production file outside the allowed scope is genuinely "
-        "required:",
+        "# Mandatory Coding Skill",
         "",
-        "1. Stop before modifying it.",
-        "2. Explain which file is required.",
-        "3. Explain why it is required.",
-        "4. Explain why the current Project Guard plan underestimated the "
-        "scope.",
-        "5. Explain whether a correct and maintainable implementation exists "
-        "within the current scope.",
+        f"Read and follow: `{skill_path}`",
         "",
-        "## Implementation Rule",
-        "",
-        "Use the Smallest Safe Change that fully satisfies the goal.",
-        "",
-        "Do not sacrifice correctness only to reduce the number of changed "
-        "files.",
-        "",
-        "Prefer reusing existing behavior over duplicating functionality.",
-        "",
-        "## Testing Rule",
-        "",
-        "Run targeted tests for the behavior directly affected by the change.",
-        "",
-        "Expand test scope only when the actual implementation affects shared "
-        "interfaces, shared execution paths, or multiple core modules.",
-        "",
-        "## Completion Rule",
-        "",
-        "Do not commit automatically.",
-        "",
-        "When finished, report:",
-        "",
-        "1. What was implemented",
-        "2. Production files changed",
-        "3. Recommended-scope files changed",
-        "4. Possible-scope files changed",
-        "5. Whether any avoided files were modified",
-        "6. Whether Project Guard underestimated the required scope",
-        "7. New dependencies",
-        "8. New abstractions",
-        "9. Tests run",
-        "10. Whether the full test suite was run and why",
-        "11. Known limitations",
+        "The Engineering Contract is task-specific.",
+        "The Coding Skill contains permanent engineering rules.",
     ]
     return "\n".join(lines) + "\n"

@@ -16,7 +16,14 @@ from .config import (
     DIFF_MANY_MODULES,
     LARGE_FILE_LINES,
 )
-from .models import PlanCompliance, PlanSnapshot, ReviewResult
+from .models import (
+    ComplexitySignal,
+    EngineeringContract,
+    PlanCompliance,
+    PlanSnapshot,
+    RemediationConstraint,
+    ReviewResult,
+)
 from .planner import (
     MIN_EVIDENCE_TOKEN_MATCHES,
     _goal_evidence_tokens,
@@ -35,6 +42,10 @@ class NotAGitRepoError(RuntimeError):
 
 
 class PlanSnapshotError(RuntimeError):
+    pass
+
+
+class ContractError(RuntimeError):
     pass
 
 
@@ -65,6 +76,43 @@ def load_plan_snapshot(path: Path) -> PlanSnapshot:
         raise PlanSnapshotError(
             f"invalid plan snapshot: {exc.errors()}"
         ) from exc
+
+
+def load_engineering_contract(path: Path) -> EngineeringContract:
+    if not path.is_file():
+        raise ContractError(f"contract file not found: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ContractError(
+            f"cannot parse contract file {path}: {exc}"
+        ) from exc
+    if data.get("version") != 1:
+        raise ContractError(
+            f"unsupported contract version: {data.get('version')!r} "
+            "(expected 1)"
+        )
+    try:
+        return EngineeringContract.model_validate(data)
+    except ValidationError as exc:
+        raise ContractError(
+            f"invalid engineering contract: {exc.errors()}"
+        ) from exc
+
+
+def contract_to_snapshot(
+    contract: EngineeringContract,
+) -> PlanSnapshot:
+    return PlanSnapshot(
+        goal=contract.original_request,
+        recommended_scope=contract.recommended_scope,
+        possible_scope=contract.possible_scope,
+        avoid_modifying=contract.avoid_modifying,
+        new_dependency=contract.new_dependency,
+        new_abstraction=contract.new_abstraction,
+        refactor=contract.refactor,
+        existing_capability_files=contract.existing_capability_files,
+    )
 
 
 def _is_test_path(rel: str) -> bool:
@@ -257,6 +305,11 @@ def analyze_diff(
         total_added=total_added,
         total_deleted=total_deleted,
         changed_paths=[p for p in paths if p != ".gitignore"],
+        added_paths=[
+            p
+            for p in paths
+            if p != ".gitignore" and changed.get(p) == "A"
+        ],
         dependency_changed=dependency_changed,
         many_modules_changed=many_modules,
         large_file_additions=large_file_additions,
@@ -356,9 +409,9 @@ def check_plan_compliance(
 
 def _new_top_level_symbols(
     root: Path, result: ReviewResult
-) -> dict[str, list[str]]:
-    """Top-level classes/functions added by the working-tree diff."""
-    added: dict[str, list[str]] = {}
+) -> dict[str, tuple[list[str], list[str]]]:
+    """Top-level classes/functions added by the diff per file."""
+    added: dict[str, tuple[list[str], list[str]]] = {}
     for rel in result.changed_paths:
         if not rel.endswith(".py") or _is_test_path(rel):
             continue
@@ -374,15 +427,17 @@ def _new_top_level_symbols(
             if before_src is not None
             else None
         )
-        before_names = (
-            set(before.classes) | set(before.top_functions)
-            if before is not None
-            else set()
+        before_classes = set(before.classes) if before is not None else set()
+        before_functions = (
+            set(before.top_functions) if before is not None else set()
         )
-        after_names = set(after.classes) | set(after.top_functions)
-        new_names = after_names - before_names
-        if new_names:
-            added[rel] = sorted(new_names)
+        new_classes = set(after.classes) - before_classes
+        new_functions = set(after.top_functions) - before_functions
+        if new_classes or new_functions:
+            added[rel] = (
+                sorted(new_classes),
+                sorted(new_functions),
+            )
     return added
 
 
@@ -421,8 +476,10 @@ def check_reuse_warnings(
         return []
 
     warnings: list[str] = []
-    for rel, new_names in _new_top_level_symbols(root, result).items():
-        for name in new_names:
+    for rel, (new_classes, new_functions) in _new_top_level_symbols(
+        root, result
+    ).items():
+        for name in new_classes + new_functions:
             if (
                 _token_overlap(_identifier_tokens(name), goal_tokens)
                 >= MIN_EVIDENCE_TOKEN_MATCHES
@@ -432,6 +489,206 @@ def check_reuse_warnings(
                     f"{rel} overlaps existing capability in {verified[0]}"
                 )
     return warnings
+
+
+def check_complexity(
+    root: Path,
+    contract: EngineeringContract,
+    result: ReviewResult,
+) -> ComplexitySignal:
+    """Compare the diff increment against the contract's preferred budget."""
+    budget = contract.complexity_budget
+    production = [
+        p
+        for p in result.changed_paths
+        if p.endswith(".py") and not _is_test_path(p)
+    ]
+    new_files = [
+        p
+        for p in result.added_paths
+        if p.endswith(".py") and not _is_test_path(p)
+    ]
+    new_classes = 0
+    new_functions = 0
+    for _, (classes, functions) in _new_top_level_symbols(
+        root, result
+    ).items():
+        new_classes += len(classes)
+        new_functions += len(functions)
+
+    over_budget = []
+    if len(new_files) > budget.preferred_new_production_files:
+        over_budget.append("new production files")
+    if new_classes >= 2:
+        over_budget.append("new top-level classes")
+    if result.dependency_changed and budget.preferred_new_dependencies == 0:
+        over_budget.append("new dependency")
+    if (
+        len(production)
+        > budget.preferred_max_touched_production_files + 2
+    ):
+        over_budget.append("touched production files")
+
+    return ComplexitySignal(
+        level="MEDIUM" if over_budget else "LOW",
+        touched_production_files=len(production),
+        new_production_files=len(new_files),
+        new_top_level_classes=new_classes,
+        new_top_level_functions=new_functions,
+        dependency_changed=result.dependency_changed,
+    )
+
+
+def check_requirement_fidelity(
+    contract: EngineeringContract,
+    result: ReviewResult,
+) -> str:
+    """Conservative structural fidelity signal (never claims semantic PASS)."""
+    if not contract.explicit_requirements:
+        return "NEEDS HUMAN CONFIRMATION"
+    production = [
+        p
+        for p in result.changed_paths
+        if p.endswith(".py") and not _is_test_path(p)
+    ]
+    if contract.unresolved_questions and production:
+        return "NEEDS HUMAN CONFIRMATION"
+    allowed = set(contract.recommended_scope) | set(contract.possible_scope)
+    if production and not any(p in allowed for p in production):
+        return "NEEDS HUMAN CONFIRMATION"
+    return "NO STRUCTURAL CONFLICT FOUND"
+
+
+def build_remediation_constraints(
+    compliance: PlanCompliance,
+    reuse_warnings: list[str],
+) -> list[RemediationConstraint]:
+    constraints: list[RemediationConstraint] = []
+    severity = "high" if compliance.risk == "HIGH" else "medium"
+    for warning in reuse_warnings:
+        constraints.append(
+            RemediationConstraint(
+                finding_type="duplicate_implementation",
+                severity="medium",
+                constraints=[
+                    "Reuse the existing capability.",
+                    "Do not introduce a parallel implementation.",
+                ],
+                evidence=[warning],
+                requires_scope_amendment=[],
+            )
+        )
+    for violation in compliance.violations:
+        if violation.startswith("Unplanned production file:"):
+            file = violation.split(":", 1)[1].strip()
+            constraints.append(
+                RemediationConstraint(
+                    finding_type="scope_violation",
+                    severity=severity,
+                    constraints=[
+                        "Keep changes inside the contract scope.",
+                        "Request a scope amendment before modifying files "
+                        "outside the contract.",
+                    ],
+                    evidence=[violation],
+                    requires_scope_amendment=[file],
+                )
+            )
+        elif violation.startswith("Modified explicitly avoided file:"):
+            file = violation.split(":", 1)[1].strip()
+            constraints.append(
+                RemediationConstraint(
+                    finding_type="scope_violation",
+                    severity="high",
+                    constraints=[
+                        "Do not modify explicitly avoided files.",
+                        "Request a scope amendment before touching them.",
+                    ],
+                    evidence=[violation],
+                    requires_scope_amendment=[file],
+                )
+            )
+        else:
+            constraints.append(
+                RemediationConstraint(
+                    finding_type="compliance",
+                    severity=severity,
+                    constraints=["Resolve the contract violation."],
+                    evidence=[violation],
+                    requires_scope_amendment=[],
+                )
+            )
+    return constraints
+
+
+def format_complexity(signal: ComplexitySignal, contract: EngineeringContract) -> str:
+    budget = contract.complexity_budget
+    lines = [
+        f"Complexity Signal: {signal.level}",
+        "",
+        "Complexity Budget:",
+        f"- preferred touched production files: "
+        f"{budget.preferred_max_touched_production_files} | "
+        f"actual: {signal.touched_production_files}",
+        f"- preferred new production files: "
+        f"{budget.preferred_new_production_files} | "
+        f"actual: {signal.new_production_files}",
+        f"- preferred new abstractions: "
+        f"{budget.preferred_new_abstractions} | "
+        f"actual new top-level classes: {signal.new_top_level_classes}",
+        f"- new top-level functions: {signal.new_top_level_functions} "
+        "(informational)",
+        f"- dependency changes: "
+        f"{'yes' if signal.dependency_changed else 'no'}",
+    ]
+    return "\n".join(lines)
+
+
+def format_quality_signals(
+    root: Path, result: ReviewResult
+) -> str:
+    symbols = _new_top_level_symbols(root, result)
+    lines = ["Implementation Quality Signals:"]
+    if not symbols:
+        lines.append("- no new top-level symbols")
+    else:
+        for rel, (classes, functions) in symbols.items():
+            names = classes + functions
+            lines.append(f"- {rel}: {', '.join(names)}")
+        generic = [
+            name
+            for _, (classes, functions) in symbols.items()
+            for name in classes + functions
+            if any(
+                hint in name.lower()
+                for hint in ("manager", "handler", "process")
+            )
+        ]
+        if generic:
+            lines.append(
+                "- generic naming detected (informational): "
+                + ", ".join(generic)
+            )
+    return "\n".join(lines)
+
+
+def format_remediation_constraints(
+    constraints: list[RemediationConstraint],
+) -> str:
+    lines = ["Remediation Constraints:"]
+    if not constraints:
+        lines.append("- none")
+        return "\n".join(lines)
+    for constraint in constraints:
+        lines.append(f"- {constraint.finding_type} ({constraint.severity})")
+        lines.extend(f"  - {c}" for c in constraint.constraints)
+        lines.extend(f"  evidence: {e}" for e in constraint.evidence)
+        if constraint.requires_scope_amendment:
+            lines.append(
+                "  requires scope amendment: "
+                + ", ".join(constraint.requires_scope_amendment)
+            )
+    return "\n".join(lines)
 
 
 def format_plan_compliance(compliance: PlanCompliance) -> str:

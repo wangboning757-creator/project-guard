@@ -44,6 +44,17 @@ def plan(
         "--output-instructions",
         help="Write agent instructions Markdown to this file (no auto-persist)",
     ),
+    output_contract: Path | None = typer.Option(
+        None,
+        "--output-contract",
+        help="Write the Engineering Contract JSON to this file "
+        "(no auto-persist)",
+    ),
+    output_skill: Path | None = typer.Option(
+        None,
+        "--output-skill",
+        help="Copy the fixed Coding Skill template to this file",
+    ),
 ):
     """Check a feature request before implementation."""
     result = planner.analyze_plan(path, request)
@@ -61,14 +72,41 @@ def plan(
             typer.echo(f"Error: cannot write plan snapshot: {exc}", err=True)
             raise typer.Exit(1) from exc
         typer.echo(f"Plan snapshot written to {output_plan}")
-    if output_instructions is not None:
-        snapshot = result.snapshot
-        if snapshot is None:
-            typer.echo("Error: no plan snapshot available", err=True)
+    if output_contract is not None:
+        contract = result.contract
+        if contract is None:
+            typer.echo("Error: no engineering contract available", err=True)
             raise typer.Exit(1)
         try:
+            output_contract.write_text(
+                contract.model_dump_json(indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            typer.echo(
+                f"Error: cannot write engineering contract: {exc}", err=True
+            )
+            raise typer.Exit(1) from exc
+        typer.echo(f"Engineering contract written to {output_contract}")
+    if output_skill is not None:
+        try:
+            output_skill.write_text(
+                instructions.skill_template_text(),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            typer.echo(f"Error: cannot write coding skill: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        typer.echo(f"Coding skill written to {output_skill}")
+    if output_instructions is not None:
+        contract = result.contract
+        if contract is None:
+            typer.echo("Error: no engineering contract available", err=True)
+            raise typer.Exit(1)
+        skill_path = output_skill or Path(".project-guard-skill.md")
+        try:
             output_instructions.write_text(
-                instructions.format_instructions(snapshot),
+                instructions.format_instructions(contract, skill_path),
                 encoding="utf-8",
             )
         except OSError as exc:
@@ -93,10 +131,30 @@ def review(
         "--instructions",
         help="Agent instructions file to exclude from review diff.",
     ),
+    contract: Path | None = typer.Option(
+        None,
+        "--contract",
+        help="Engineering Contract JSON to check the diff against",
+    ),
+    skill: Path | None = typer.Option(
+        None,
+        "--skill",
+        help="Coding Skill file to exclude from review diff.",
+    ),
 ):
     """Analyze the current git diff for risk signals."""
     snapshot = None
-    if plan is not None:
+    engineering_contract = None
+    if contract is not None:
+        try:
+            engineering_contract = reviewer.load_engineering_contract(
+                contract
+            )
+        except reviewer.ContractError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        snapshot = reviewer.contract_to_snapshot(engineering_contract)
+    elif plan is not None:
         try:
             snapshot = reviewer.load_plan_snapshot(plan)
         except reviewer.PlanSnapshotError as exc:
@@ -105,14 +163,17 @@ def review(
     exclude_paths: set[Path] = set()
     if plan is not None:
         exclude_paths.add(plan)
-    if instructions is not None:
-        if not instructions.is_file():
-            typer.echo(
-                f"Error: instructions file not found: {instructions}",
-                err=True,
-            )
-            raise typer.Exit(1)
-        exclude_paths.add(instructions)
+    if contract is not None:
+        exclude_paths.add(contract)
+    for artifact in (instructions, skill):
+        if artifact is not None:
+            if not artifact.is_file():
+                typer.echo(
+                    f"Error: file not found: {artifact}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+            exclude_paths.add(artifact)
     try:
         result = reviewer.analyze_diff(
             path,
@@ -130,9 +191,34 @@ def review(
             compliance.reuse_warnings = reuse_warnings
             compliance.risk = reviewer.merge_risk(compliance.risk, "MEDIUM")
         final_risk = reviewer.merge_risk(result.risk, compliance.risk)
+        if engineering_contract is not None:
+            complexity = reviewer.check_complexity(
+                path, engineering_contract, result
+            )
+            if complexity.level == "MEDIUM":
+                final_risk = reviewer.merge_risk(final_risk, "MEDIUM")
+            fidelity = reviewer.check_requirement_fidelity(
+                engineering_contract, result
+            )
+            constraints = reviewer.build_remediation_constraints(
+                compliance, reuse_warnings
+            )
         typer.echo(reviewer.format_review(result, risk=final_risk))
         typer.echo("")
         typer.echo(reviewer.format_plan_compliance(compliance))
+        if engineering_contract is not None:
+            typer.echo("")
+            typer.echo(f"Requirement Fidelity: {fidelity}")
+            typer.echo("")
+            typer.echo(
+                reviewer.format_complexity(
+                    complexity, engineering_contract
+                )
+            )
+            typer.echo("")
+            typer.echo(reviewer.format_quality_signals(path, result))
+            typer.echo("")
+            typer.echo(reviewer.format_remediation_constraints(constraints))
     else:
         typer.echo(reviewer.format_review(result))
 

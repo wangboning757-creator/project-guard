@@ -20,11 +20,15 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from project_guard.instructions import format_instructions, skill_template_text
+from project_guard.models import EngineeringContract
 from project_guard.planner import analyze_plan
 from project_guard.reviewer import (
     analyze_diff,
+    build_remediation_constraints,
     check_plan_compliance,
     check_reuse_warnings,
+    contract_to_snapshot,
     merge_risk,
 )
 
@@ -386,3 +390,62 @@ def test_review_reuse_wiring_no_warning(tmp_path):
     compliance = check_plan_compliance(snapshot, result)
     assert compliance.status == "PASS"
     assert check_reuse_warnings(repo, snapshot, result) == []
+
+
+def test_e2e_contract_domain_exclusion():
+    """Engineering Contract preserves the original request, keeps explicit
+    requirements conservative, and carries planner scope/capability facts."""
+    goal = _load_expected(DOMAIN_EXCLUSION_EVAL_DIR)["goal"]
+    result = analyze_plan(DOMAIN_EXCLUSION_EVAL_DIR / "repo", goal)
+    contract = result.contract
+    assert contract is not None
+    assert contract.original_request == goal
+    assert contract.explicit_requirements == [goal]
+    assert not any("web" in r.lower() for r in contract.explicit_requirements)
+    assert "src/sample_app/cli.py" in contract.recommended_scope
+    assert (
+        "src/sample_app/search/tavily.py"
+        in contract.existing_capability_files
+    )
+
+    skill = skill_template_text()
+    assert "Requirement Fidelity" in skill
+
+    instructions = format_instructions(contract, ".project-guard-skill.md")
+    assert ".project-guard-skill.md" in instructions
+    assert goal in instructions
+
+    loaded = EngineeringContract.model_validate_json(
+        contract.model_dump_json()
+    )
+    assert loaded == contract
+
+
+def test_e2e_contract_parallel_implementation_remediation(tmp_path):
+    """A simulated parallel implementation inside scope produces a reuse
+    warning, a remediation constraint, and MEDIUM risk."""
+    repo = _init_git_repo(DOMAIN_EXCLUSION_EVAL_DIR / "repo", tmp_path)
+    goal = _load_expected(DOMAIN_EXCLUSION_EVAL_DIR)["goal"]
+    contract = analyze_plan(repo, goal).contract
+    assert contract is not None
+    snapshot = contract_to_snapshot(contract)
+
+    _append(
+        repo / "src/sample_app/cli.py",
+        "\n\n"
+        "class ExcludedDomainSearchProvider:\n"
+        "    def __init__(self, exclude_domains=()):\n"
+        "        self.exclude_domains = exclude_domains\n",
+    )
+
+    result = analyze_diff(repo)
+    compliance = check_plan_compliance(snapshot, result)
+    warnings = check_reuse_warnings(repo, snapshot, result)
+    assert warnings
+    constraints = build_remediation_constraints(compliance, warnings)
+    assert any(
+        c.finding_type == "duplicate_implementation"
+        for c in constraints
+    )
+    risk = merge_risk(result.risk, "MEDIUM")
+    assert risk == "MEDIUM"

@@ -518,7 +518,7 @@ def test_plan_avoid_excludes_direct_capability_file(tmp_path):
     assert "provider abstraction" not in result.suggestion.lower()
 
 
-def test_plan_reuse_finds_wiring_point(tmp_path):
+def _make_reuse_repo(tmp_path):
     src = tmp_path / "src" / "sample_app"
     search = src / "search"
     search.mkdir(parents=True)
@@ -553,10 +553,19 @@ def test_plan_reuse_finds_wiring_point(tmp_path):
         "    return domains\n",
         encoding="utf-8",
     )
+    return tmp_path
+
+
+REUSE_TAVILY_GOAL = (
+    "Reuse the existing Tavily exclude_domains capability for the CLI "
+    "domain-exclusion option instead of client-side filtering"
+)
+
+
+def test_plan_reuse_finds_wiring_point(tmp_path):
     result = analyze_plan(
-        tmp_path,
-        "Reuse the existing Tavily exclude_domains capability for the CLI "
-        "domain-exclusion option instead of client-side filtering",
+        _make_reuse_repo(tmp_path),
+        REUSE_TAVILY_GOAL,
     )
     snap = result.snapshot
     assert snap is not None
@@ -569,3 +578,36 @@ def test_plan_reuse_finds_wiring_point(tmp_path):
         "Existing capability in src/sample_app/search/tavily.py"
         in result.guardrail
     )
+
+
+def test_engineering_contract_builder(tmp_path):
+    result = analyze_plan(_make_reuse_repo(tmp_path), REUSE_TAVILY_GOAL)
+    contract = result.contract
+    assert contract is not None
+    assert contract.original_request == REUSE_TAVILY_GOAL
+    assert contract.explicit_requirements == [REUSE_TAVILY_GOAL]
+    assert contract.inferred_requirements
+    assert set(contract.explicit_requirements).isdisjoint(
+        contract.inferred_requirements
+    )
+    assert contract.recommended_scope == ["src/sample_app/cli.py"]
+    assert "src/sample_app/factory.py" in contract.possible_scope
+    assert (
+        "src/sample_app/search/tavily.py"
+        in contract.existing_capability_files
+    )
+    assert (
+        contract.complexity_budget.preferred_max_touched_production_files
+        == 3
+    )
+    assert any("CLI entry point" in f for f in contract.repository_facts)
+    assert any(
+        "Existing capability detected" in f
+        for f in contract.repository_facts
+    )
+    assert any(
+        "Provider construction detected" in f
+        for f in contract.repository_facts
+    )
+    assert any("CLI-scoped" in a for a in contract.assumptions)
+    assert contract.testing_policy

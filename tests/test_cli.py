@@ -59,8 +59,9 @@ def test_plan_output_instructions_writes_file(tmp_path):
     assert result.exit_code == 0
     assert out.is_file()
     content = out.read_text(encoding="utf-8")
-    assert "# Project Guard Agent Instructions" in content
-    assert "Add PDF export." in content
+    assert "# Original User Request" in content
+    assert "Add PDF export" in content
+    assert "# Mandatory Coding Skill" in content
     assert "Agent instructions written" in result.output
 
 
@@ -94,6 +95,76 @@ def test_plan_output_plan_and_instructions_together(tmp_path):
     assert inst_out.is_file()
     assert "Plan snapshot written" in result.output
     assert "Agent instructions written" in result.output
+
+
+def test_plan_output_contract_writes_file(tmp_path):
+    (tmp_path / "main.py").write_text("print(1)\n", encoding="utf-8")
+    out = tmp_path / "contract.json"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            str(tmp_path),
+            "Add PDF export",
+            "--output-contract",
+            str(out),
+        ],
+    )
+    assert result.exit_code == 0
+    assert out.is_file()
+    content = out.read_text(encoding="utf-8")
+    assert '"original_request": "Add PDF export"' in content
+    assert '"explicit_requirements"' in content
+    assert "Engineering contract written" in result.output
+
+
+def test_plan_output_skill_writes_template(tmp_path):
+    (tmp_path / "main.py").write_text("print(1)\n", encoding="utf-8")
+    out = tmp_path / "skill.md"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            str(tmp_path),
+            "Add PDF export",
+            "--output-skill",
+            str(out),
+        ],
+    )
+    assert result.exit_code == 0
+    assert out.is_file()
+    content = out.read_text(encoding="utf-8")
+    assert "Requirement Fidelity" in content
+    assert "Smallest Safe Change" in content
+    assert "Coding skill written" in result.output
+
+
+def test_plan_contract_skill_instructions_together(tmp_path):
+    (tmp_path / "main.py").write_text("print(1)\n", encoding="utf-8")
+    contract_out = tmp_path / "contract.json"
+    skill_out = tmp_path / "skill.md"
+    inst_out = tmp_path / "instructions.md"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            str(tmp_path),
+            "Add PDF export",
+            "--output-contract",
+            str(contract_out),
+            "--output-skill",
+            str(skill_out),
+            "--output-instructions",
+            str(inst_out),
+        ],
+    )
+    assert result.exit_code == 0
+    assert contract_out.is_file()
+    assert skill_out.is_file()
+    assert inst_out.is_file()
+    inst = inst_out.read_text(encoding="utf-8")
+    assert "skill.md" in inst
+    assert "Add PDF export" in inst
 
 
 def test_review_missing_plan_errors(tmp_path):
@@ -167,4 +238,43 @@ def test_review_missing_instructions_errors(tmp_path):
         ],
     )
     assert result.exit_code == 1
-    assert "instructions file not found" in result.output
+    assert "file not found" in result.output
+
+
+def test_review_with_contract(tmp_path):
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "T")
+    (tmp_path / "app.py").write_text("print(1)\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "init")
+    (tmp_path / "app.py").write_text(
+        "print(1)\nprint(2)\n", encoding="utf-8"
+    )
+    (tmp_path / "contract.json").write_text(
+        '{"version": 1, "original_request": "Add a CLI option", '
+        '"explicit_requirements": ["Add a CLI option"], '
+        '"inferred_requirements": [], "assumptions": [], '
+        '"unresolved_questions": [], "repository_facts": [], '
+        '"recommended_scope": ["app.py"], "possible_scope": [], '
+        '"avoid_modifying": [], "existing_capability_files": [], '
+        '"new_dependency": "not justified", '
+        '"new_abstraction": "not justified", "refactor": "not justified", '
+        '"complexity_budget": {}, "testing_policy": ""}',
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        [
+            "review",
+            str(tmp_path),
+            "--contract",
+            str(tmp_path / "contract.json"),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Plan Compliance:" in result.output
+    assert "Status: PASS" in result.output
+    assert "Requirement Fidelity:" in result.output
+    assert "Complexity Signal:" in result.output
+    assert "Remediation Constraints:" in result.output

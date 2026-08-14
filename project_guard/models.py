@@ -84,6 +84,7 @@ class PlanResult(BaseModel):
     suggestion: str = ""
     guardrail: str = ""
     snapshot: PlanSnapshot | None = None
+    contract: EngineeringContract | None = None
 
 
 class ReviewResult(BaseModel):
@@ -93,6 +94,7 @@ class ReviewResult(BaseModel):
     total_added: int = 0
     total_deleted: int = 0
     changed_paths: list[str] = []
+    added_paths: list[str] = []
     dependency_changed: bool = False
     many_modules_changed: bool = False
     large_file_additions: list[str] = []
@@ -111,6 +113,61 @@ class PlanCompliance(BaseModel):
     violations: list[str] = []
     reuse_warnings: list[str] = []
     risk: str = "LOW"
+
+
+class ComplexityBudget(BaseModel):
+    preferred_new_production_files: int = 0
+    preferred_new_abstractions: int = 0
+    preferred_new_dependencies: int = 0
+    preferred_max_touched_production_files: int = 3
+
+
+class EngineeringContract(BaseModel):
+    """Immutable-by-default engineering contract derived from a plan."""
+
+    version: int = 1
+    original_request: str
+    explicit_requirements: list[str] = []
+    inferred_requirements: list[str] = []
+    assumptions: list[str] = []
+    unresolved_questions: list[str] = []
+    repository_facts: list[str] = []
+    recommended_scope: list[str] = []
+    possible_scope: list[str] = []
+    avoid_modifying: list[str] = []
+    existing_capability_files: list[str] = []
+    new_dependency: str = "not justified"
+    new_abstraction: str = "not justified"
+    refactor: str = "not justified"
+    complexity_budget: ComplexityBudget = ComplexityBudget()
+    testing_policy: str = ""
+
+
+class ContractAmendment(BaseModel):
+    """A requested scope change against an immutable EngineeringContract."""
+
+    version: int = 1
+    requested_files: list[str] = []
+    reason: str = ""
+    safe_in_scope_alternative_exists: bool = False
+    status: str = "pending"  # pending / approved / rejected
+
+
+class RemediationConstraint(BaseModel):
+    finding_type: str
+    severity: str
+    constraints: list[str] = []
+    evidence: list[str] = []
+    requires_scope_amendment: list[str] = []
+
+
+class ComplexitySignal(BaseModel):
+    level: str = "LOW"
+    touched_production_files: int = 0
+    new_production_files: int = 0
+    new_top_level_classes: int = 0
+    new_top_level_functions: int = 0
+    dependency_changed: bool = False
 
 
 class ScoreDeduction(BaseModel):

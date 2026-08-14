@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .models import PlanMatch, PlanResult, PlanSnapshot
+from .models import (
+    ComplexityBudget,
+    EngineeringContract,
+    PlanMatch,
+    PlanResult,
+    PlanSnapshot,
+)
 from .python_index import ModuleIndex, index_python_file
 from .scanner import count_lines, iter_files
 
@@ -361,6 +367,100 @@ def _find_capability_wiring_points(
             continue
         points.append(m.path)
     return points
+
+
+def build_engineering_contract(
+    request: str,
+    keywords: list[str],
+    snapshot: PlanSnapshot,
+    ranked: list[PlanMatch],
+    index: dict[str, ModuleIndex],
+    entry_modules: set[str],
+) -> EngineeringContract:
+    """Derive an immutable Engineering Contract from planner evidence."""
+    goal_tokens = _goal_evidence_tokens(request)
+    ranked_source = [
+        m
+        for m in ranked
+        if _is_source(m.path) and not _is_init(m.path)
+    ]
+    cap_files = snapshot.existing_capability_files
+    wiring = (
+        _find_capability_wiring_points(
+            ranked_source, cap_files, index, goal_tokens
+        )
+        if cap_files
+        else []
+    )
+    cli_intent = _has_cli_intent(request, keywords)
+    cli_entry = next(
+        (
+            m.path
+            for m in ranked_source
+            if _cli_ownership(m.path, keywords, entry_modules, index) > 0
+        ),
+        None,
+    )
+
+    facts: list[str] = []
+    if cli_entry:
+        facts.append(f"CLI entry point: {cli_entry}")
+    for cap in cap_files:
+        facts.append(f"Existing capability detected: {cap}")
+    for point in wiring:
+        facts.append(f"Provider construction detected: {point}")
+    if not facts:
+        facts.append("No high-confidence structural facts found.")
+
+    assumptions: list[str] = []
+    if cli_intent and cli_entry:
+        assumptions.append("Implementation is likely CLI-scoped.")
+    if cap_files:
+        assumptions.append(
+            "Reuse the existing capability instead of building a parallel "
+            "mechanism."
+        )
+
+    unresolved: list[str] = []
+    if "web" not in request.lower() and cli_intent:
+        web_files = [
+            m.path
+            for m in ranked_source
+            if "/web/" in "/" + m.path + "/"
+            or Path(m.path).name == "routes.py"
+        ]
+        if web_files:
+            unresolved.append(
+                "Should this behavior also apply to the web interface?"
+            )
+
+    return EngineeringContract(
+        original_request=request,
+        explicit_requirements=[request],
+        inferred_requirements=[
+            "Preserve existing behavior outside the requested change.",
+            "Reuse existing capability where available.",
+            "Avoid unrelated refactoring.",
+            "Do not add dependencies or abstractions unless required by "
+            "the current goal.",
+        ],
+        assumptions=assumptions,
+        unresolved_questions=unresolved,
+        repository_facts=facts,
+        recommended_scope=snapshot.recommended_scope,
+        possible_scope=snapshot.possible_scope,
+        avoid_modifying=snapshot.avoid_modifying,
+        existing_capability_files=cap_files,
+        new_dependency=snapshot.new_dependency,
+        new_abstraction=snapshot.new_abstraction,
+        refactor=snapshot.refactor,
+        complexity_budget=ComplexityBudget(),
+        testing_policy=(
+            "Run targeted tests for the behavior directly affected by the "
+            "change; expand scope only when shared interfaces or multiple "
+            "core modules are affected."
+        ),
+    )
 
 
 def _capability_keyword(
@@ -794,6 +894,14 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
         impl_paths,
         entry_modules,
     )
+    contract = build_engineering_contract(
+        request,
+        keywords,
+        snapshot,
+        ranked,
+        index,
+        entry_modules,
+    )
     return PlanResult(
         request=request,
         keywords=keywords,
@@ -802,6 +910,7 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
         suggestion=suggestion,
         guardrail=guardrail,
         snapshot=snapshot,
+        contract=contract,
     )
 
 
