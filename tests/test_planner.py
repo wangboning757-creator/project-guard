@@ -516,3 +516,56 @@ def test_plan_avoid_excludes_direct_capability_file(tmp_path):
     assert "pkg/search/tavily.py" not in snap.avoid_modifying
     assert "pkg/search/tavily.py" in snap.existing_capability_files
     assert "provider abstraction" not in result.suggestion.lower()
+
+
+def test_plan_reuse_finds_wiring_point(tmp_path):
+    src = tmp_path / "src" / "sample_app"
+    search = src / "search"
+    search.mkdir(parents=True)
+    (search / "tavily.py").write_text(
+        "class TavilySearchProvider:\n"
+        "    def __init__(self, exclude_domains=()):\n"
+        "        self.exclude_domains = exclude_domains\n"
+        "    def search(self, query):\n"
+        "        payload = {}\n"
+        "        if self.exclude_domains:\n"
+        "            payload['exclude_domains'] = list(self.exclude_domains)\n"
+        "        return payload\n",
+        encoding="utf-8",
+    )
+    (src / "factory.py").write_text(
+        "from .search.tavily import TavilySearchProvider\n\n"
+        "def create_search_provider(exclude_domains=()):\n"
+        "    return TavilySearchProvider(exclude_domains=exclude_domains)\n",
+        encoding="utf-8",
+    )
+    (src / "settings.py").write_text(
+        "class Settings:\n"
+        "    def domain_config(self):\n"
+        "        return {}\n",
+        encoding="utf-8",
+    )
+    (src / "cli.py").write_text(
+        "import typer\n\n"
+        "def main():\n"
+        "    typer.run(research)\n\n"
+        "def research(domains):\n"
+        "    return domains\n",
+        encoding="utf-8",
+    )
+    result = analyze_plan(
+        tmp_path,
+        "Reuse the existing Tavily exclude_domains capability for the CLI "
+        "domain-exclusion option instead of client-side filtering",
+    )
+    snap = result.snapshot
+    assert snap is not None
+    assert snap.recommended_scope == ["src/sample_app/cli.py"]
+    assert "src/sample_app/factory.py" in snap.possible_scope
+    assert "src/sample_app/search/tavily.py" not in snap.avoid_modifying
+    assert "src/sample_app/settings.py" not in snap.possible_scope
+    assert "src/sample_app/search/tavily.py" in snap.existing_capability_files
+    assert (
+        "Existing capability in src/sample_app/search/tavily.py"
+        in result.guardrail
+    )

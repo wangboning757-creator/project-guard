@@ -58,6 +58,9 @@ INTEGRATION_STEMS = {
     "factory", "settings", "config", "registry", "client",
     "workflow", "runtime", "cli", "main", "routes",
 }
+WIRING_STEMS = {"factory", "registry", "runtime"}
+CONSTRUCTION_FUNCTION_HINTS = ("create", "build", "make", "get", "load")
+REUSE_GOAL_PHRASES = ("reuse", "use existing", "reuse existing", "instead of")
 
 
 def _is_test_path(rel: str) -> bool:
@@ -105,6 +108,11 @@ def _has_parameter_change_intent(
     request: str, keywords: list[str]
 ) -> bool:
     return any(k in PARAM_INTENT_TERMS for k in keywords)
+
+
+def _has_reuse_goal_intent(request: str) -> bool:
+    lowered = request.lower()
+    return any(phrase in lowered for phrase in REUSE_GOAL_PHRASES)
 
 
 def _terms_for(keyword: str) -> set[str]:
@@ -303,6 +311,58 @@ def _has_direct_capability_evidence(
     )
 
 
+def _has_construction_signal(idx: ModuleIndex, path: str) -> bool:
+    stem = Path(path).stem.lstrip("_").lower()
+    if stem in WIRING_STEMS:
+        return True
+    return any(
+        any(hint in fn.lower() for hint in CONSTRUCTION_FUNCTION_HINTS)
+        for fn in idx.functions
+    )
+
+
+def _find_capability_wiring_points(
+    ranked_source: list[PlanMatch],
+    cap_files: list[str],
+    index: dict[str, ModuleIndex],
+    goal_tokens: set[str],
+) -> list[str]:
+    """Files that construct/inject a known capability owner (factory-like)."""
+    owner_names: set[str] = set()
+    for cap in cap_files:
+        idx = index.get(cap)
+        if idx is not None:
+            owner_names |= set(idx.classes)
+            owner_names |= set(idx.functions)
+            owner_names.add(Path(cap).stem.lstrip("_").lower())
+    if not owner_names:
+        return []
+    owner_lower = {n.lower() for n in owner_names}
+    points: list[str] = []
+    for m in ranked_source:
+        idx = index.get(m.path)
+        if idx is None:
+            continue
+        imports = {i.lower() for i in idx.imports}
+        if not (imports & owner_lower):
+            continue
+        if not _has_construction_signal(idx, m.path):
+            continue
+        names = (
+            set(idx.classes)
+            | set(idx.functions)
+            | set(idx.imports)
+            | set(idx.identifiers)
+        )
+        if not any(
+            _token_overlap(_identifier_tokens(n), goal_tokens) >= 1
+            for n in names
+        ):
+            continue
+        points.append(m.path)
+    return points
+
+
 def _capability_keyword(
     m: PlanMatch, keywords: list[str], index: dict[str, ModuleIndex]
 ) -> str | None:
@@ -414,6 +474,8 @@ def _build_guardrail(
 
     scope_paths: list[str] = []
     scope_lines: list[str] = []
+    reuse_goal = False
+    wiring_points: set[str] = set()
     if abstraction:
         base_path = abstraction[0]
         scope_paths.append(base_path)
@@ -445,17 +507,41 @@ def _build_guardrail(
                 ordered = [top] + [
                     m for m in ranked_source if m.path != top.path
                 ]
-        owner_path: str | None = None
+        recommended = ordered[0] if ordered else None
+        cap_files = sorted(
+            m.path
+            for m in ranked_source
+            if m.path != (recommended.path if recommended else None)
+            and _has_direct_capability_evidence(
+                m.path, goal_tokens, index
+            )
+        )
+        reuse_goal = _has_reuse_goal_intent(request) or bool(
+            cap_files and (param_intent or cli_intent)
+        )
+        if reuse_goal and cap_files:
+            wiring_points = set(
+                _find_capability_wiring_points(
+                    ranked_source, cap_files, index, goal_tokens
+                )
+            )
+        if recommended is not None:
+            scope_paths.append(recommended.path)
         for m in ordered:
             if len(scope_paths) >= 3:
                 break
+            if m.path != scope_paths[0] and m.path in wiring_points:
+                scope_paths.append(m.path)
+        owner_path = scope_paths[0] if scope_paths else None
+        for m in ordered:
+            if len(scope_paths) >= 3:
+                break
+            if m.path in scope_paths:
+                continue
             cli_owner = _cli_ownership(
                 m.path, keywords, entry_modules, index
             )
-            if not scope_paths:
-                scope_paths.append(m.path)
-                owner_path = m.path
-            elif (
+            if (
                 _ownership_score(m.path, keywords) > 0
                 or (
                     _is_integration(m.path, cli_owner)
@@ -492,6 +578,16 @@ def _build_guardrail(
     avoid_lines = [f"  - {m.path}" for m in avoid] or [
         "  - none - no strong signal"
     ]
+    recommended_path = scope_paths[0] if scope_paths else None
+    snapshot_cap_files = sorted(
+        m.path
+        for m in ranked_source
+        if m.path != recommended_path
+        and m.path not in wiring_points
+        and _has_direct_capability_evidence(
+            m.path, goal_tokens, index
+        )
+    )
 
     if abstraction:
         base_path = abstraction[0]
@@ -502,6 +598,11 @@ def _build_guardrail(
         if factory:
             reuse += f" and provider creation path in {factory}"
         reuse += "."
+    elif snapshot_cap_files and reuse_goal:
+        reuse = (
+            f"Existing capability in {snapshot_cap_files[0]}. "
+            "Reuse it instead of creating a parallel mechanism."
+        )
     elif scope_paths:
         top = next(m for m in ranked_source if m.path == scope_paths[0])
         cli_owner = _cli_ownership(
@@ -607,14 +708,7 @@ def _build_guardrail(
         new_dependency=dep,
         new_abstraction=abs_text,
         refactor=refactor,
-        existing_capability_files=sorted(
-            m.path
-            for m in ranked_source
-            if m.path not in scope_paths
-            and _has_direct_capability_evidence(
-                m.path, goal_tokens, index
-            )
-        ),
+        existing_capability_files=snapshot_cap_files,
     )
     return text, snapshot
 

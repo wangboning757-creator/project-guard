@@ -170,6 +170,28 @@ def test_eval_plan_domain_exclusion():
     assert snap.refactor == "not justified"
 
 
+def test_eval_plan_reuse_tavily_capability():
+    """Eval: reuse-existing-capability goal surfaces the factory wiring
+    point instead of the capability owner or config-only modules."""
+    goal = (
+        "Reuse the existing Tavily exclude_domains capability for the CLI "
+        "domain-exclusion option instead of client-side filtering"
+    )
+    result = analyze_plan(DOMAIN_EXCLUSION_EVAL_DIR / "repo", goal)
+    snap = result.snapshot
+    assert snap is not None
+    assert "src/sample_app/cli.py" in snap.recommended_scope
+    assert "src/sample_app/factory.py" in snap.possible_scope
+    assert "src/sample_app/search/tavily.py" not in snap.avoid_modifying
+    assert snap.new_dependency == "not justified"
+    assert "provider abstraction" not in result.suggestion.lower()
+    assert "new provider module" not in result.guardrail
+    assert (
+        "Existing capability in src/sample_app/search/tavily.py"
+        in result.guardrail
+    )
+
+
 # ---------------------------------------------------------------- review evals
 
 
