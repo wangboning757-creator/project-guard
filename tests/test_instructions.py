@@ -34,17 +34,31 @@ def test_format_instructions_deterministic():
     for fragment in (
         "# Original User Request",
         "Add a CLI option",
-        "## Engineering Inferences",
+        "## Engineering Guardrails",
         "## Repository Facts",
+        "## Strongly Related Scope",
+        "## Possible Scope",
+        "## Do Not Modify",
+        "## Existing Capabilities",
+        "## Architecture Constraints",
+        "## Implementation Signals",
+        "## Testing Guidance",
         "src/app/cli.py",
         "src/app/workflow.py",
         "src/app/writer.py",
-        "## Complexity Budget",
-        "## Testing Policy",
         "# Mandatory Coding Skill",
         ".project-guard-skill.md",
+        "Project Guard does not determine the final semantic interpretation",
     ):
         assert fragment in text
+    for forbidden in (
+        "## Assumptions",
+        "## Unresolved Questions",
+        "## Engineering Inferences",
+        "Implementation is likely CLI-scoped.",
+        "Should this behavior also apply to the web interface?",
+    ):
+        assert forbidden not in text
 
 
 def test_format_instructions_empty_sections():
@@ -59,18 +73,6 @@ def test_format_instructions_empty_sections():
         ".project-guard-skill.md",
     )
     assert "None identified." in text
-
-
-def test_format_instructions_unresolved_questions():
-    text = format_instructions(
-        _contract(
-            unresolved_questions=[
-                "Should this behavior also apply to the web interface?"
-            ]
-        ),
-        ".project-guard-skill.md",
-    )
-    assert "web interface" in text
 
 
 def test_format_instructions_conditional_rules():
@@ -99,6 +101,13 @@ def test_skill_template_is_generic():
         "Smallest Safe Change",
         "Scope Amendment",
         "Reuse Before Build",
+        "Task Normalization",
+        "Explicit requirements",
+        "Engineering inferences",
+        "Assumptions",
+        "Unresolved questions",
+        "ask the user",
+        "Task Contract",
     ):
         assert fragment in text
     for forbidden in (

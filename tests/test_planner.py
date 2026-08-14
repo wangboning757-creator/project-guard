@@ -609,5 +609,6 @@ def test_engineering_contract_builder(tmp_path):
         "Provider construction detected" in f
         for f in contract.repository_facts
     )
-    assert any("CLI-scoped" in a for a in contract.assumptions)
+    assert contract.assumptions == []
+    assert contract.unresolved_questions == []
     assert contract.testing_policy

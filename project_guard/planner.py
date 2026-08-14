@@ -404,7 +404,7 @@ def build_engineering_contract(
 
     facts: list[str] = []
     if cli_entry:
-        facts.append(f"CLI entry point: {cli_entry}")
+        facts.append(f"CLI entry point detected: {cli_entry}")
     for cap in cap_files:
         facts.append(f"Existing capability detected: {cap}")
     for point in wiring:
@@ -412,30 +412,10 @@ def build_engineering_contract(
     if not facts:
         facts.append("No high-confidence structural facts found.")
 
-    assumptions: list[str] = []
-    if cli_intent and cli_entry:
-        assumptions.append("Implementation is likely CLI-scoped.")
-    if cap_files:
-        assumptions.append(
-            "Reuse the existing capability instead of building a parallel "
-            "mechanism."
-        )
-
-    unresolved: list[str] = []
-    if "web" not in request.lower() and cli_intent:
-        web_files = [
-            m.path
-            for m in ranked_source
-            if "/web/" in "/" + m.path + "/"
-            or Path(m.path).name == "routes.py"
-        ]
-        if web_files:
-            unresolved.append(
-                "Should this behavior also apply to the web interface?"
-            )
-
     return EngineeringContract(
         original_request=request,
+        # Preserved copy of the explicit user request. Project Guard does
+        # not claim to have decomposed or semantically validated it.
         explicit_requirements=[request],
         inferred_requirements=[
             "Preserve existing behavior outside the requested change.",
@@ -444,8 +424,10 @@ def build_engineering_contract(
             "Do not add dependencies or abstractions unless required by "
             "the current goal.",
         ],
-        assumptions=assumptions,
-        unresolved_questions=unresolved,
+        # Project Guard does not guess business scope or product ambiguity.
+        # The Coding Agent forms assumptions and unresolved questions.
+        assumptions=[],
+        unresolved_questions=[],
         repository_facts=facts,
         recommended_scope=snapshot.recommended_scope,
         possible_scope=snapshot.possible_scope,

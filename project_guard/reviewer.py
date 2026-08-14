@@ -517,17 +517,25 @@ def check_complexity(
         new_functions += len(functions)
 
     over_budget = []
-    if len(new_files) > budget.preferred_new_production_files:
-        over_budget.append("new production files")
-    if new_classes >= 2:
-        over_budget.append("new top-level classes")
-    if result.dependency_changed and budget.preferred_new_dependencies == 0:
-        over_budget.append("new dependency")
+    new_symbols = new_classes + new_functions
     if (
         len(production)
         > budget.preferred_max_touched_production_files + 2
     ):
         over_budget.append("touched production files")
+    if (
+        new_classes >= 2
+        and len(production) <= budget.preferred_max_touched_production_files
+    ):
+        over_budget.append("multiple new top-level classes")
+    if result.dependency_changed and contract.new_dependency == "not justified":
+        over_budget.append("new dependency not justified")
+    if (
+        new_files
+        and new_classes
+        and len(production) > budget.preferred_max_touched_production_files
+    ):
+        over_budget.append("new files with abstraction-like structure")
 
     return ComplexitySignal(
         level="MEDIUM" if over_budget else "LOW",
@@ -543,7 +551,11 @@ def check_requirement_fidelity(
     contract: EngineeringContract,
     result: ReviewResult,
 ) -> str:
-    """Conservative structural fidelity signal (never claims semantic PASS)."""
+    """Structural-only fidelity signal.
+
+    Project Guard does not determine semantic correctness; it only checks
+    for obvious structural conflicts.
+    """
     if not contract.explicit_requirements:
         return "NEEDS HUMAN CONFIRMATION"
     production = [
@@ -551,12 +563,10 @@ def check_requirement_fidelity(
         for p in result.changed_paths
         if p.endswith(".py") and not _is_test_path(p)
     ]
-    if contract.unresolved_questions and production:
-        return "NEEDS HUMAN CONFIRMATION"
     allowed = set(contract.recommended_scope) | set(contract.possible_scope)
     if production and not any(p in allowed for p in production):
         return "NEEDS HUMAN CONFIRMATION"
-    return "NO STRUCTURAL CONFLICT FOUND"
+    return "STRUCTURAL CHECK ONLY"
 
 
 def build_remediation_constraints(
@@ -648,27 +658,24 @@ def format_quality_signals(
     root: Path, result: ReviewResult
 ) -> str:
     symbols = _new_top_level_symbols(root, result)
-    lines = ["Implementation Quality Signals:"]
-    if not symbols:
-        lines.append("- no new top-level symbols")
-    else:
-        for rel, (classes, functions) in symbols.items():
-            names = classes + functions
-            lines.append(f"- {rel}: {', '.join(names)}")
-        generic = [
-            name
-            for _, (classes, functions) in symbols.items()
-            for name in classes + functions
-            if any(
-                hint in name.lower()
-                for hint in ("manager", "handler", "process")
-            )
-        ]
-        if generic:
-            lines.append(
-                "- generic naming detected (informational): "
-                + ", ".join(generic)
-            )
+    new_classes = sum(len(classes) for _, (classes, _) in symbols.items())
+    new_functions = sum(len(funcs) for _, (_, funcs) in symbols.items())
+    new_files = [
+        p
+        for p in result.added_paths
+        if p.endswith(".py") and not _is_test_path(p)
+    ]
+    lines = [
+        "Implementation Quality Signals:",
+        f"- New production files: {len(new_files)}",
+        f"- New top-level classes: {new_classes}",
+        f"- New top-level functions: {new_functions}",
+        f"- Dependency files changed: "
+        f"{'yes' if result.dependency_changed else 'no'}",
+    ]
+    for rel, (classes, functions) in symbols.items():
+        names = classes + functions
+        lines.append(f"- New symbols: {rel} :: {', '.join(names)}")
     return "\n".join(lines)
 
 

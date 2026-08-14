@@ -8,9 +8,35 @@ If materially different interpretations would change user-visible behavior,
 ask the user before coding.
 
 Distinguish:
-- Explicit user requirements
+- Explicit requirements
 - Engineering inferences
 - Assumptions
+- Unresolved questions
+
+# Task Normalization
+
+Before modifying code:
+
+1. Read the original user request.
+2. Read the Guard Contract.
+3. Inspect only the repository context necessary to understand the task.
+4. Form a task-level understanding that distinguishes:
+
+   - Explicit requirements
+   - Engineering inferences
+   - Assumptions
+   - Unresolved questions
+
+5. Never present an engineering inference or assumption as an explicit user requirement.
+
+6. If two or more plausible interpretations would materially change
+   user-visible behavior, stop and ask the user before coding.
+
+7. Do not ask the user about implementation details that can be safely
+   decided from the existing architecture.
+
+8. Prefer the smallest interpretation that satisfies the explicit user intent,
+   but do not use "minimal scope" to justify changing the meaning of the request.
 
 # Smallest Safe Change
 
@@ -25,8 +51,13 @@ Search for existing capabilities before introducing a parallel mechanism.
 
 # Scope Discipline
 
-Treat recommended scope as the primary area.
-Treat possible scope as allowed only when necessary.
+Recommended scope:
+Files Project Guard considers strongly related based on repository evidence.
+
+Possible scope:
+Files that may be relevant if implementation requires them.
+
+These are governance boundaries, not a substitute for engineering judgement.
 
 Do not modify files outside the contract without requesting a scope amendment.
 
@@ -59,18 +90,72 @@ Run targeted tests for affected behavior first.
 
 Run broader/full tests only when change scope or shared contracts justify it.
 
+# Task Contract
+
+Before coding, form a task-level contract and maintain it at
+`.project-guard-task-contract.json`:
+
+```json
+{
+  "version": 1,
+  "original_request": "...",
+  "explicit_requirements": [],
+  "engineering_inferences": [],
+  "assumptions": [],
+  "unresolved_questions": [],
+  "planned_production_files": []
+}
+```
+
+The Task Contract is the Coding Agent's output, not Project Guard's.
+
+When the user approves a scope or requirement change, do not silently
+overwrite the previous understanding. Update the Task Contract's `revision`
+or append an `amendments` entry instead.
+
 # Scope Amendment
 
 If implementation requires a production file outside the contract:
-stop before modifying it.
+STOP BEFORE MODIFYING THE FILE.
 
-Report:
-- requested file
-- exact reason
-- why current allowed scope is insufficient
-- whether a safe in-scope alternative exists
+Output a Scope Amendment Request:
 
-Wait for user approval.
+```text
+Scope Amendment Request
+
+Requested file:
+...
+
+Reason:
+...
+
+Why current scope is insufficient:
+...
+
+Safe in-scope alternative:
+yes/no
+
+Expected effect on the user goal:
+...
+```
+
+Then wait for user approval. Do not self-approve.
+
+Do not modify files listed under Do Not Modify unless a scope amendment
+is approved.
+
+# Priority
+
+1. Original User Request
+2. User Clarifications / Approved Amendments
+3. Guard Contract hard boundaries
+4. Coding Skill
+5. Agent engineering judgement
+
+If the Guard Contract conflicts with an explicit user requirement, do not
+silently obey the Guard Contract. STOP, report the conflict, and request
+clarification or a scope amendment. Requirement Fidelity ranks above scope
+optimization.
 
 # Completion
 
@@ -82,3 +167,7 @@ Report:
 - dependencies/abstractions added
 - tests run
 - unresolved limitations
+
+Project Guard does not determine the final semantic interpretation of the
+user's request, and it does not judge whether an implementation is "best".
+It reports repository facts, boundaries, and evidence of clear risk.

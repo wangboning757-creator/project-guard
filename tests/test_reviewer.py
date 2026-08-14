@@ -552,12 +552,37 @@ def test_complexity_new_classes_is_medium(repo):
     assert signal.new_top_level_classes == 2
 
 
-def test_complexity_new_production_file_is_medium(repo):
+def test_complexity_single_new_file_is_low(repo):
     (repo / "extra.py").write_text("x = 1\n", encoding="utf-8")
     result = analyze_diff(repo)
     signal = check_complexity(repo, _contract_for_repo(), result)
-    assert signal.level == "MEDIUM"
+    assert signal.level == "LOW"
     assert signal.new_production_files == 1
+
+
+def test_complexity_combined_signals_is_medium(repo):
+    for name in ("a.py", "b.py", "c.py", "d.py", "e.py"):
+        (repo / name).write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "files")
+    (repo / "app.py").write_text(
+        "print('hi')\n"
+        "class A:\n    pass\n"
+        "class B:\n    pass\n"
+        "class C:\n    pass\n",
+        encoding="utf-8",
+    )
+    for name in ("a.py", "b.py", "c.py", "d.py", "e.py"):
+        (repo / name).write_text("x = 2\n", encoding="utf-8")
+    (repo / "requirements.txt").write_text(
+        "requests==2.31\n", encoding="utf-8"
+    )
+    result = analyze_diff(repo)
+    signal = check_complexity(repo, _contract_for_repo(), result)
+    assert signal.level == "MEDIUM"
+    assert signal.touched_production_files == 6
+    assert signal.new_top_level_classes == 3
+    assert signal.dependency_changed
 
 
 def test_requirement_fidelity_no_conflict(repo):
@@ -567,11 +592,11 @@ def test_requirement_fidelity_no_conflict(repo):
     result = analyze_diff(repo)
     assert (
         check_requirement_fidelity(_contract_for_repo(), result)
-        == "NO STRUCTURAL CONFLICT FOUND"
+        == "STRUCTURAL CHECK ONLY"
     )
 
 
-def test_requirement_fidelity_unresolved_questions(repo):
+def test_requirement_fidelity_unresolved_questions_do_not_force_conflict(repo):
     (repo / "app.py").write_text(
         "print('hi')\nprint('bye')\n", encoding="utf-8"
     )
@@ -581,7 +606,7 @@ def test_requirement_fidelity_unresolved_questions(repo):
     result = analyze_diff(repo)
     assert (
         check_requirement_fidelity(contract, result)
-        == "NEEDS HUMAN CONFIRMATION"
+        == "STRUCTURAL CHECK ONLY"
     )
 
 

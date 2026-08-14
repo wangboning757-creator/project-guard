@@ -116,6 +116,13 @@ class PlanCompliance(BaseModel):
 
 
 class ComplexityBudget(BaseModel):
+    """Preferred structural limits used only as a signal baseline.
+
+    Not an implementation optimality metric. A budget is exceeded to flag
+    unexpected structural expansion, never to declare an implementation
+    wrong.
+    """
+
     preferred_new_production_files: int = 0
     preferred_new_abstractions: int = 0
     preferred_new_dependencies: int = 0
@@ -123,11 +130,20 @@ class ComplexityBudget(BaseModel):
 
 
 class EngineeringContract(BaseModel):
-    """Immutable-by-default engineering contract derived from a plan."""
+    """Guard-side contract produced by Project Guard.
+
+    EngineeringContract contains repository-specific evidence and
+    governance constraints produced by Project Guard.
+
+    It is not a complete semantic interpretation of the user's request.
+    The Coding Agent is responsible for producing or confirming
+    task-level requirements and assumptions.
+    """
 
     version: int = 1
     original_request: str
     explicit_requirements: list[str] = []
+    # Engineering governance constraints, NOT inferred user requirements.
     inferred_requirements: list[str] = []
     assumptions: list[str] = []
     unresolved_questions: list[str] = []

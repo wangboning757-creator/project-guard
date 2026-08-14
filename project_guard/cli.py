@@ -209,6 +209,11 @@ def review(
         if engineering_contract is not None:
             typer.echo("")
             typer.echo(f"Requirement Fidelity: {fidelity}")
+            if fidelity == "STRUCTURAL CHECK ONLY":
+                typer.echo("No obvious structural conflict found.")
+            typer.echo(
+                "Semantic correctness is not determined by Project Guard."
+            )
             typer.echo("")
             typer.echo(
                 reviewer.format_complexity(

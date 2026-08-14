@@ -407,6 +407,8 @@ def test_e2e_contract_domain_exclusion():
         "src/sample_app/search/tavily.py"
         in contract.existing_capability_files
     )
+    assert contract.assumptions == []
+    assert contract.unresolved_questions == []
 
     skill = skill_template_text()
     assert "Requirement Fidelity" in skill
