@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import typer
@@ -22,6 +24,75 @@ def _write_artifact(path: Path, content: str, label: str) -> None:
     except OSError as exc:
         typer.echo(f"Error: cannot write {label}: {exc}", err=True)
         raise typer.Exit(1) from exc
+
+
+def _prepare_task(root: Path, request: str) -> dict[str, Path]:
+    """Generate the standard guard artifacts for a request (shared by
+    prepare and run)."""
+    result = planner.analyze_plan(root, request)
+    snapshot = result.snapshot
+    contract = result.contract
+    if snapshot is None or contract is None:
+        typer.echo("Error: no plan/contract available", err=True)
+        raise typer.Exit(1)
+    artifacts = {
+        "plan": root / ".project-guard-plan.json",
+        "contract": root / ".project-guard-contract.json",
+        "instructions": root / ".project-guard-instructions.md",
+        "skill": root / ".project-guard-skill.md",
+        "agent_prompt": root / ".project-guard-agent-prompt.md",
+    }
+    _write_artifact(
+        artifacts["plan"],
+        snapshot.model_dump_json(indent=2) + "\n",
+        "plan snapshot",
+    )
+    _write_artifact(
+        artifacts["contract"],
+        contract.model_dump_json(indent=2) + "\n",
+        "engineering contract",
+    )
+    _write_artifact(
+        artifacts["instructions"],
+        instructions.format_instructions(
+            contract, ".project-guard-skill.md"
+        ),
+        "agent instructions",
+    )
+    _write_artifact(
+        artifacts["skill"],
+        instructions.skill_template_text(),
+        "coding skill",
+    )
+    _write_artifact(
+        artifacts["agent_prompt"],
+        instructions.format_agent_prompt(),
+        "agent prompt",
+    )
+    return artifacts
+
+
+def _resolve_claude_executable() -> str | None:
+    """Locate the Claude Code CLI via the standard-library lookup."""
+    return shutil.which("claude")
+
+
+def _claude_command(executable: str, prompt_text: str) -> list[str]:
+    """Build the Claude Code CLI invocation for the resolved executable.
+
+    Verified against `claude --help`: `claude [prompt]` starts an
+    interactive session by default with the prompt as the initial task;
+    `-p/--print` is non-interactive and is intentionally not used.
+    The resolved executable path is passed directly. On Windows this is
+    the npm `claude.CMD` shim, which Python subprocess executes directly
+    (verified in the target environment).
+    """
+    return [executable, prompt_text]
+
+
+def _run_claude(cmd: list[str], cwd: Path) -> int:
+    """Launch Claude Code with inherited terminal stdio (interactive)."""
+    return subprocess.run(cmd, cwd=str(cwd)).returncode
 
 
 @app.command()
@@ -118,40 +189,8 @@ def prepare(
     ),
 ):
     """Prepare guard artifacts and an agent-ready handoff for a request."""
-    result = planner.analyze_plan(path, request)
-    snapshot = result.snapshot
-    contract = result.contract
-    if snapshot is None or contract is None:
-        typer.echo("Error: no plan/contract available", err=True)
-        raise typer.Exit(1)
     root = Path(path)
-    _write_artifact(
-        root / ".project-guard-plan.json",
-        snapshot.model_dump_json(indent=2) + "\n",
-        "plan snapshot",
-    )
-    _write_artifact(
-        root / ".project-guard-contract.json",
-        contract.model_dump_json(indent=2) + "\n",
-        "engineering contract",
-    )
-    _write_artifact(
-        root / ".project-guard-instructions.md",
-        instructions.format_instructions(
-            contract, ".project-guard-skill.md"
-        ),
-        "agent instructions",
-    )
-    _write_artifact(
-        root / ".project-guard-skill.md",
-        instructions.skill_template_text(),
-        "coding skill",
-    )
-    _write_artifact(
-        root / ".project-guard-agent-prompt.md",
-        instructions.format_agent_prompt(),
-        "agent prompt",
-    )
+    _prepare_task(root, request)
 
     task_contract_path = root / ".project-guard-task-contract.json"
     if task_contract_path.is_file():
@@ -180,6 +219,185 @@ def prepare(
     typer.echo("")
     typer.echo("Agent handoff:")
     typer.echo(".project-guard-agent-prompt.md")
+
+
+@app.command()
+def run(
+    path: Path = typer.Argument(".", help="Project directory"),
+    request: str = typer.Argument(
+        ..., help="Feature request to implement with Claude Code"
+    ),
+):
+    """Prepare a governed coding task, run it with local Claude Code,
+    then review the resulting changes."""
+    root = Path(path)
+    typer.echo("Project Guard: preparing task...")
+    artifacts = _prepare_task(root, request)
+    task_contract_path = root / ".project-guard-task-contract.json"
+    typer.echo("")
+    typer.echo("Project Guard: starting Claude Code...")
+    prompt_text = artifacts["agent_prompt"].read_text(encoding="utf-8")
+    executable = _resolve_claude_executable()
+    if executable is None:
+        typer.echo("Claude Code executable was not found.", err=True)
+        typer.echo(
+            "Install/configure Claude Code and ensure `claude` "
+            "is available on PATH.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    cmd = _claude_command(executable, prompt_text)
+    try:
+        exit_code = _run_claude(cmd, root)
+    except OSError:
+        typer.echo("Claude Code executable was not found.", err=True)
+        typer.echo(
+            "Install/configure Claude Code and ensure `claude` "
+            "is available on PATH.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    typer.echo("")
+    typer.echo("Project Guard: Claude Code finished.")
+    if exit_code != 0:
+        typer.echo(
+            f"Claude Code exited with status {exit_code}.", err=True
+        )
+        typer.echo("Project Guard run was not completed.", err=True)
+        raise typer.Exit(exit_code)
+    if not task_contract_path.is_file():
+        typer.echo("Claude Code finished without producing", err=True)
+        typer.echo(".project-guard-task-contract.json.", err=True)
+        typer.echo("Project Guard review was not run.", err=True)
+        raise typer.Exit(1)
+    try:
+        task_contract_obj = reviewer.load_task_contract(task_contract_path)
+    except reviewer.TaskContractError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if task_contract_obj.original_request != request:
+        typer.echo(
+            "Claude Code did not update the Agent-owned Task Contract",
+            err=True,
+        )
+        typer.echo("for the current request.", err=True)
+        typer.echo("Project Guard review was not run.", err=True)
+        raise typer.Exit(1)
+    typer.echo("")
+    typer.echo("Project Guard: reviewing changes...")
+    _review_contract_mode(
+        root,
+        artifacts["contract"],
+        task_contract_path,
+        artifacts["instructions"],
+        artifacts["skill"],
+    )
+
+
+def _review_contract_mode(
+    root: Path,
+    contract_path: Path,
+    task_contract_path: Path | None,
+    instructions_path: Path | None,
+    skill_path: Path | None,
+) -> None:
+    """Shared contract-mode review used by `review --contract` and `run`."""
+    try:
+        engineering_contract = reviewer.load_engineering_contract(
+            contract_path
+        )
+    except reviewer.ContractError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    snapshot = reviewer.contract_to_snapshot(engineering_contract)
+    task_contract_obj = None
+    if task_contract_path is not None:
+        try:
+            task_contract_obj = reviewer.load_task_contract(
+                task_contract_path
+            )
+        except reviewer.TaskContractError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        if (
+            task_contract_obj.original_request
+            != engineering_contract.original_request
+        ):
+            typer.echo("Task Contract mismatch:", err=True)
+            typer.echo(
+                "original_request does not match Guard Contract.",
+                err=True,
+            )
+            raise typer.Exit(1)
+    exclude_paths: set[Path] = {contract_path}
+    if task_contract_path is not None:
+        exclude_paths.add(task_contract_path)
+    for artifact in (instructions_path, skill_path):
+        if artifact is not None:
+            if not artifact.is_file():
+                typer.echo(
+                    f"Error: file not found: {artifact}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+            exclude_paths.add(artifact)
+    result = reviewer.analyze_diff(
+        root,
+        exclude_paths=exclude_paths or None,
+    )
+    amendments = (
+        task_contract_obj.scope_amendments
+        if task_contract_obj is not None
+        else None
+    )
+    compliance = reviewer.check_plan_compliance(
+        snapshot, result, amendments=amendments
+    )
+    reuse_warnings = reviewer.check_reuse_warnings(
+        root, snapshot, result
+    )
+    if reuse_warnings:
+        compliance.reuse_warnings = reuse_warnings
+        compliance.risk = reviewer.merge_risk(compliance.risk, "MEDIUM")
+    final_risk = reviewer.merge_risk(result.risk, compliance.risk)
+    complexity = reviewer.check_complexity(root, engineering_contract, result)
+    if complexity.level == "MEDIUM":
+        final_risk = reviewer.merge_risk(final_risk, "MEDIUM")
+    fidelity = reviewer.check_requirement_fidelity(
+        engineering_contract, result
+    )
+    constraints = reviewer.build_remediation_constraints(
+        compliance, reuse_warnings
+    )
+    extra_reasons: list[str] = []
+    if reuse_warnings:
+        extra_reasons.extend(reuse_warnings)
+    if complexity.level == "MEDIUM":
+        extra_reasons.append("complexity signal: MEDIUM")
+    if compliance.risk in ("MEDIUM", "HIGH") and compliance.violations:
+        extra_reasons.extend(compliance.violations)
+    typer.echo(
+        reviewer.format_review(
+            result,
+            risk=final_risk,
+            extra_reasons=extra_reasons,
+        )
+    )
+    typer.echo("")
+    typer.echo(reviewer.format_plan_compliance(compliance))
+    typer.echo("")
+    typer.echo(f"Requirement Fidelity: {fidelity}")
+    if fidelity == "STRUCTURAL CHECK ONLY":
+        typer.echo("No obvious structural conflict found.")
+    typer.echo(
+        "Semantic correctness is not determined by Project Guard."
+    )
+    typer.echo("")
+    typer.echo(reviewer.format_complexity(complexity, engineering_contract))
+    typer.echo("")
+    typer.echo(reviewer.format_quality_signals(root, result))
+    typer.echo("")
+    typer.echo(reviewer.format_remediation_constraints(constraints))
 
 
 @app.command()
@@ -213,53 +431,24 @@ def review(
     ),
 ):
     """Analyze the current git diff for risk signals."""
-    snapshot = None
-    engineering_contract = None
-    task_contract_obj = None
     if contract is not None:
-        try:
-            engineering_contract = reviewer.load_engineering_contract(
-                contract
-            )
-        except reviewer.ContractError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(1) from exc
-        snapshot = reviewer.contract_to_snapshot(engineering_contract)
-    elif plan is not None:
+        _review_contract_mode(
+            path, contract, task_contract, instructions, skill
+        )
+        return
+    snapshot = None
+    if plan is not None:
         try:
             snapshot = reviewer.load_plan_snapshot(plan)
         except reviewer.PlanSnapshotError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from exc
     if task_contract is not None:
-        if engineering_contract is None:
-            typer.echo(
-                "Error: --task-contract requires --contract",
-                err=True,
-            )
-            raise typer.Exit(1)
-        try:
-            task_contract_obj = reviewer.load_task_contract(task_contract)
-        except reviewer.TaskContractError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(1) from exc
-        if (
-            task_contract_obj.original_request
-            != engineering_contract.original_request
-        ):
-            typer.echo("Task Contract mismatch:", err=True)
-            typer.echo(
-                "original_request does not match Guard Contract.",
-                err=True,
-            )
-            raise typer.Exit(1)
+        typer.echo("Error: --task-contract requires --contract", err=True)
+        raise typer.Exit(1)
     exclude_paths: set[Path] = set()
     if plan is not None:
         exclude_paths.add(plan)
-    if contract is not None:
-        exclude_paths.add(contract)
-    if task_contract is not None:
-        exclude_paths.add(task_contract)
     for artifact in (instructions, skill):
         if artifact is not None:
             if not artifact.is_file():
@@ -278,14 +467,7 @@ def review(
         typer.echo(f"Error: not a git repository ({exc})", err=True)
         raise typer.Exit(1) from exc
     if snapshot is not None:
-        amendments = (
-            task_contract_obj.scope_amendments
-            if task_contract_obj is not None
-            else None
-        )
-        compliance = reviewer.check_plan_compliance(
-            snapshot, result, amendments=amendments
-        )
+        compliance = reviewer.check_plan_compliance(snapshot, result)
         reuse_warnings = reviewer.check_reuse_warnings(
             path, snapshot, result
         )
@@ -293,24 +475,9 @@ def review(
             compliance.reuse_warnings = reuse_warnings
             compliance.risk = reviewer.merge_risk(compliance.risk, "MEDIUM")
         final_risk = reviewer.merge_risk(result.risk, compliance.risk)
-        complexity = None
-        if engineering_contract is not None:
-            complexity = reviewer.check_complexity(
-                path, engineering_contract, result
-            )
-            if complexity.level == "MEDIUM":
-                final_risk = reviewer.merge_risk(final_risk, "MEDIUM")
-            fidelity = reviewer.check_requirement_fidelity(
-                engineering_contract, result
-            )
-            constraints = reviewer.build_remediation_constraints(
-                compliance, reuse_warnings
-            )
         extra_reasons: list[str] = []
         if reuse_warnings:
             extra_reasons.extend(reuse_warnings)
-        if complexity is not None and complexity.level == "MEDIUM":
-            extra_reasons.append("complexity signal: MEDIUM")
         if compliance.risk in ("MEDIUM", "HIGH") and compliance.violations:
             extra_reasons.extend(compliance.violations)
         typer.echo(
@@ -322,24 +489,6 @@ def review(
         )
         typer.echo("")
         typer.echo(reviewer.format_plan_compliance(compliance))
-        if engineering_contract is not None:
-            typer.echo("")
-            typer.echo(f"Requirement Fidelity: {fidelity}")
-            if fidelity == "STRUCTURAL CHECK ONLY":
-                typer.echo("No obvious structural conflict found.")
-            typer.echo(
-                "Semantic correctness is not determined by Project Guard."
-            )
-            typer.echo("")
-            typer.echo(
-                reviewer.format_complexity(
-                    complexity, engineering_contract
-                )
-            )
-            typer.echo("")
-            typer.echo(reviewer.format_quality_signals(path, result))
-            typer.echo("")
-            typer.echo(reviewer.format_remediation_constraints(constraints))
     else:
         typer.echo(reviewer.format_review(result))
 

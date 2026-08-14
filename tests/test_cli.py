@@ -1,3 +1,4 @@
+import json
 import subprocess
 
 from typer.testing import CliRunner
@@ -505,3 +506,248 @@ def test_prepare_does_not_touch_task_contract(tmp_path):
     assert result.exit_code == 0
     assert task.read_text(encoding="utf-8") == original
     assert "agent-owned and was left unchanged" in result.output
+
+
+def _init_git_repo_with_main(tmp_path):
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "T")
+    (tmp_path / "main.py").write_text(
+        "print('export pdf')\n", encoding="utf-8"
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "init")
+    return tmp_path
+
+
+def _fake_claude_success(cwd):
+    (cwd / "main.py").write_text(
+        "print('export pdf')\nprint(2)\n", encoding="utf-8"
+    )
+    (cwd / ".project-guard-task-contract.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "original_request": "Add PDF export",
+                "scope_amendments": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _mock_claude_resolution(monkeypatch, executable="claude.exe"):
+    monkeypatch.setattr(
+        "project_guard.cli._resolve_claude_executable",
+        lambda: executable,
+    )
+
+
+def test_run_prepares_before_invoking_claude(tmp_path, monkeypatch):
+    repo = _init_git_repo_with_main(tmp_path)
+    calls = []
+    _mock_claude_resolution(monkeypatch)
+
+    def fake_run(cmd, cwd):
+        calls.append((cmd, cwd))
+        for name in (
+            ".project-guard-plan.json",
+            ".project-guard-contract.json",
+            ".project-guard-instructions.md",
+            ".project-guard-skill.md",
+            ".project-guard-agent-prompt.md",
+        ):
+            assert (cwd / name).is_file()
+        _fake_claude_success(cwd)
+        return 0
+
+    monkeypatch.setattr("project_guard.cli._run_claude", fake_run)
+    result = runner.invoke(app, ["run", str(repo), "Add PDF export"])
+    assert result.exit_code == 0
+    assert calls
+    assert calls[0][0][0] == "claude.exe"
+    assert "Project Guard: preparing task" in result.output
+    assert "Project Guard: reviewing changes" in result.output
+
+
+def test_run_agent_prompt_handoff(tmp_path, monkeypatch):
+    repo = _init_git_repo_with_main(tmp_path)
+    captured = {}
+    _mock_claude_resolution(monkeypatch)
+
+    def fake_run(cmd, cwd):
+        captured["cmd"] = cmd
+        _fake_claude_success(cwd)
+        return 0
+
+    monkeypatch.setattr("project_guard.cli._run_claude", fake_run)
+    result = runner.invoke(app, ["run", str(repo), "Add PDF export"])
+    assert result.exit_code == 0
+    assert captured["cmd"][0] == "claude.exe"
+    prompt = (repo / ".project-guard-agent-prompt.md").read_text(
+        encoding="utf-8"
+    )
+    assert captured["cmd"][1] == prompt
+    assert "Do not commit" in prompt
+    assert "--print" not in captured["cmd"]
+
+
+def test_claude_command_contract():
+    from project_guard.cli import _claude_command
+
+    assert _claude_command("C:\\npm\\claude.CMD", "hello") == [
+        "C:\\npm\\claude.CMD",
+        "hello",
+    ]
+
+
+def test_resolve_claude_executable_uses_which(monkeypatch):
+    import project_guard.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod.shutil,
+        "which",
+        lambda name: "C:\\fake\\claude.CMD"
+        if name == "claude"
+        else None,
+    )
+    assert cli_mod._resolve_claude_executable() == "C:\\fake\\claude.CMD"
+
+
+def test_run_missing_claude_executable(tmp_path, monkeypatch):
+    repo = _init_git_repo_with_main(tmp_path)
+    monkeypatch.setattr(
+        "project_guard.cli._resolve_claude_executable", lambda: None
+    )
+    launched = []
+
+    def fake_run(cmd, cwd):
+        launched.append(cmd)
+        return 0
+
+    monkeypatch.setattr("project_guard.cli._run_claude", fake_run)
+    result = runner.invoke(app, ["run", str(repo), "Add PDF export"])
+    assert result.exit_code == 1
+    assert "Claude Code executable was not found." in result.output
+    assert launched == []
+    assert "Plan Compliance" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_run_uses_resolved_windows_cmd_shim(tmp_path, monkeypatch):
+    repo = _init_git_repo_with_main(tmp_path)
+    captured = {}
+    _mock_claude_resolution(
+        monkeypatch, "C:\\Users\\wn186\\AppData\\Roaming\\npm\\claude.CMD"
+    )
+
+    def fake_run(cmd, cwd):
+        captured["cmd"] = cmd
+        _fake_claude_success(cwd)
+        return 0
+
+    monkeypatch.setattr("project_guard.cli._run_claude", fake_run)
+    result = runner.invoke(app, ["run", str(repo), "Add PDF export"])
+    assert result.exit_code == 0
+    assert (
+        captured["cmd"][0]
+        == "C:\\Users\\wn186\\AppData\\Roaming\\npm\\claude.CMD"
+    )
+    assert "--print" not in captured["cmd"]
+
+
+def test_run_claude_nonzero_exit(tmp_path, monkeypatch):
+    repo = _init_git_repo_with_main(tmp_path)
+    _mock_claude_resolution(monkeypatch)
+
+    def fail_run(cmd, cwd):
+        return 2
+
+    monkeypatch.setattr("project_guard.cli._run_claude", fail_run)
+    result = runner.invoke(app, ["run", str(repo), "Add PDF export"])
+    assert result.exit_code == 2
+    assert "Claude Code exited with status 2" in result.output
+    assert "Project Guard run was not completed" in result.output
+    assert "Plan Compliance" not in result.output
+
+
+def test_run_missing_task_contract(tmp_path, monkeypatch):
+    repo = _init_git_repo_with_main(tmp_path)
+    _mock_claude_resolution(monkeypatch)
+
+    def success_no_task(cmd, cwd):
+        return 0
+
+    monkeypatch.setattr("project_guard.cli._run_claude", success_no_task)
+    result = runner.invoke(app, ["run", str(repo), "Add PDF export"])
+    assert result.exit_code == 1
+    assert "without producing" in result.output
+    assert ".project-guard-task-contract.json." in result.output
+    assert "Project Guard review was not run." in result.output
+    assert "Plan Compliance" not in result.output
+
+
+def test_run_stale_task_contract(tmp_path, monkeypatch):
+    repo = _init_git_repo_with_main(tmp_path)
+    _mock_claude_resolution(monkeypatch)
+    (repo / ".project-guard-task-contract.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "original_request": "old goal",
+                "scope_amendments": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def success(cmd, cwd):
+        return 0
+
+    monkeypatch.setattr("project_guard.cli._run_claude", success)
+    result = runner.invoke(app, ["run", str(repo), "Add PDF export"])
+    assert result.exit_code == 1
+    assert "did not update the Agent-owned Task Contract" in result.output
+    assert "Project Guard review was not run." in result.output
+    assert "Plan Compliance" not in result.output
+
+
+def test_run_successful_orchestration(tmp_path, monkeypatch):
+    repo = _init_git_repo_with_main(tmp_path)
+    _mock_claude_resolution(monkeypatch)
+
+    def fake_run(cmd, cwd):
+        _fake_claude_success(cwd)
+        return 0
+
+    monkeypatch.setattr("project_guard.cli._run_claude", fake_run)
+    result = runner.invoke(app, ["run", str(repo), "Add PDF export"])
+    assert result.exit_code == 0
+    assert "Plan Compliance:" in result.output
+    assert "Status: PASS" in result.output
+    assert "Risk level: LOW" in result.output
+
+
+def test_run_claude_inherits_stdio(monkeypatch):
+    from pathlib import Path
+
+    import project_guard.cli as cli_mod
+
+    captured = {}
+
+    class FakeProc:
+        returncode = 0
+
+    def fake_subprocess_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", fake_subprocess_run)
+    rc = cli_mod._run_claude(["claude.exe", "prompt"], Path("."))
+    assert rc == 0
+    assert "capture_output" not in captured["kwargs"]
+    assert "stdin" not in captured["kwargs"]
+    assert "stdout" not in captured["kwargs"]
+    assert "stderr" not in captured["kwargs"]
+    assert "--print" not in captured["cmd"]
