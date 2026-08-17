@@ -1,4 +1,4 @@
-from project_guard.models import ReviewResult, ScanResult
+from project_guard.models import ReviewResult
 from project_guard.scanner import scan_project
 from project_guard.scoring import compute_score
 

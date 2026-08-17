@@ -26,15 +26,21 @@ def format_agent_prompt(
             "",
             f"Read and follow `{instructions_path}`.",
             "",
-            f"Before modifying production code, create or update "
-            f"`{task_contract_path}` as required by the Coding Skill.",
+            (
+                f"Before modifying production code, create or update "
+                f"`{task_contract_path}` as required by the Coding Skill."
+            ),
             "",
-            "If the user request has a materially ambiguous user-visible "
-            "interpretation, stop and ask the user before coding.",
+            (
+                "If the user request has a materially ambiguous user-visible "
+                "interpretation, stop and ask the user before coding."
+            ),
             "",
-            "If a production file outside the Guard Contract is genuinely "
-            "required, stop and request a Scope Amendment before modifying "
-            "it.",
+            (
+                "If a production file outside the Guard Contract is genuinely "
+                "required, stop and request a Scope Amendment before modifying "
+                "it."
+            ),
             "",
             "Use the Smallest Safe Change.",
             "",
@@ -109,9 +115,11 @@ def format_instructions(
         "",
         "## Strongly Related Scope",
         "",
-        "Files Project Guard considers strongly related based on "
-        "repository evidence. Governance boundary, not a substitute for "
-        "engineering judgement.",
+        (
+            "Files Project Guard considers strongly related based on "
+            "repository evidence. Governance boundary, not a substitute for "
+            "engineering judgement."
+        ),
         "",
         _bullet_list(contract.recommended_scope),
         "",
@@ -140,14 +148,22 @@ def format_instructions(
         "",
         "## Implementation Signals",
         "",
-        f"- preferred new production files: "
-        f"{budget.preferred_new_production_files}",
-        f"- preferred new abstractions: "
-        f"{budget.preferred_new_abstractions}",
-        f"- preferred new dependencies: "
-        f"{budget.preferred_new_dependencies}",
-        f"- preferred max touched production files: "
-        f"{budget.preferred_max_touched_production_files}",
+        (
+            f"- preferred new production files: "
+            f"{budget.preferred_new_production_files}"
+        ),
+        (
+            f"- preferred new abstractions: "
+            f"{budget.preferred_new_abstractions}"
+        ),
+        (
+            f"- preferred new dependencies: "
+            f"{budget.preferred_new_dependencies}"
+        ),
+        (
+            f"- preferred max touched production files: "
+            f"{budget.preferred_max_touched_production_files}"
+        ),
         "",
         "## Testing Guidance",
         "",
@@ -157,13 +173,19 @@ def format_instructions(
         "",
         f"Read and follow: `{skill_path}`",
         "",
-        "Before coding, use the original request, this Guard Contract, and "
-        "the Coding Skill to form your own Task Contract.",
+        (
+            "Before coding, use the original request, this Guard Contract, and "
+            "the Coding Skill to form your own Task Contract."
+        ),
         "",
-        "Project Guard does not determine the final semantic interpretation "
-        "of the user's request.",
+        (
+            "Project Guard does not determine the final semantic interpretation "
+            "of the user's request."
+        ),
         "",
-        "If materially different interpretations would change user-visible "
-        "behavior, ask the user before coding.",
+        (
+            "If materially different interpretations would change user-visible "
+            "behavior, ask the user before coding."
+        ),
     ]
     return "\n".join(lines) + "\n"

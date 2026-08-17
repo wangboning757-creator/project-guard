@@ -6,7 +6,7 @@ structured contracts, and an independent diff review - so a Coding Agent
 (such as Claude Code) can implement the user's actual requirement as the
 Smallest Safe Change.
 
-*Experimental v0.2.0*
+*Experimental v0.3.0*
 
 ## Why Project Guard
 
@@ -32,6 +32,27 @@ Requires Python 3.12+. Install from a local checkout:
 pip install -e .
 ```
 
+For the experimental Codex CLI integration PoC, set up the repository once:
+
+```bash
+project-guard init-codex .
+codex
+```
+
+Then submit a normal natural-language coding request in Codex CLI, for
+example:
+
+```text
+Add a CLI option to limit the maximum number of search queries used in an ask run.
+```
+
+This installs the project-scoped Codex `UserPromptSubmit` Hook. The first use
+may require Codex to review and trust the project Hook. Deterministic Hook
+tests pass, but real Codex CLI E2E is not complete because the local `codex`
+executable currently fails with Windows Access Denied. All prompts are
+expected to trigger preparation, including ordinary questions; there is no
+coding-intent classifier in this experimental integration.
+
 For transparent Claude Code activation, set up the repository once:
 
 ```bash
@@ -48,7 +69,7 @@ Add a CLI option to limit the maximum number of search queries used in an ask ru
 
 After the one-time setup, Project Guard activates automatically through the
 project-scoped Claude Code hook. For the explicit, fully governed runner,
-which remains the reliable fallback, use:
+which remains the reliable fallback for both integrations, use:
 
 ```bash
 project-guard run . "Add a CLI option to limit the maximum number of search queries used in an ask run."
@@ -90,8 +111,9 @@ Responsibilities are deliberately separated:
 Project Guard does not prove semantic correctness, and it does not claim to
 choose the "best" implementation.
 
-`prepare` may be triggered explicitly or automatically by the project-scoped
-Claude Code hook.
+`prepare` is triggered automatically by the verified project-scoped Claude
+Code `UserPromptSubmit` hook. The Codex CLI PoC uses the same prepare path but
+has not completed real CLI E2E validation.
 
 ## Core Principles
 
@@ -124,6 +146,9 @@ project-guard prepare PATH "REQUEST"
 project-guard init-claude PATH
     Install experimental project-scoped Claude Code activation
 
+project-guard init-codex PATH
+    Install Experimental Codex CLI integration
+
 project-guard review PATH
     Review the git diff against Guard / Task contracts
     (--contract, --task-contract, --plan, --instructions, --skill)
@@ -154,7 +179,7 @@ project-guard score PATH     AI coding readiness score
 - when Claude exits successfully, Project Guard validates the Task Contract
   and runs the final review automatically
 
-v0.2.0 adds transparent project-scoped activation for Claude Code through a
+v0.3.0 includes transparent project-scoped activation for Claude Code through a
 one-time project setup:
 
 ```bash
@@ -172,7 +197,7 @@ The project-scoped `UserPromptSubmit` hook receives the exact submitted prompt,
 resolves the Git repository root, runs the existing `prepare` workflow, and
 adds short governance context for Claude. All prompts in an opted-in
 repository currently trigger preparation, including ordinary questions. There
-is intentionally no coding-intent classifier in v0.2.0. Claude following the
+is intentionally no coding-intent classifier in v0.3.0. Claude following the
 generated instructions and maintaining the Task Contract remains model-guided;
 Project Guard review remains the independent final audit.
 
@@ -185,6 +210,31 @@ stays in its interactive session after completing a task. The user must exit
 the session (for example with `/exit`) before Project Guard resumes and runs
 the final review. Project Guard does not detect Claude's completion
 automatically.
+
+## Codex CLI Integration
+
+v0.3.0 includes an experimental project-scoped Codex CLI integration PoC:
+
+```bash
+project-guard init-codex .
+```
+
+The setup writes only the target repository's `.codex/hooks.json`; it does not
+modify `~/.codex/`. The implemented Hook receives the submitted prompt,
+resolves the Git repository root, runs the existing `prepare` workflow, and
+returns short governance context. Deterministic tests pass, but real Codex CLI
+E2E has not been completed because the local `codex` executable cannot run on
+this machine (Windows Access Denied). Codex adherence to the generated
+instructions and Task Contract remains model-guided, while Project Guard
+Review remains the independent diff-based audit.
+
+All prompts in an opted-in repository are expected to trigger preparation,
+including ordinary questions. No coding-intent classifier is used. In a real
+ChatGPT/Codex Desktop experiment, after old Guard artifacts were removed, a
+normal Prompt did not regenerate `.project-guard-contract.json`; the project
+Hook was therefore not observed to trigger. Desktop is currently not verified
+as usable for this integration; this is not a permanent support conclusion.
+`project-guard run` remains the explicit reliable fallback.
 
 ## Contracts and Governance
 
@@ -222,10 +272,13 @@ alone does not.
 
 ## Current Scope / Non-goals
 
-For the v0.2.0 state:
+For the v0.3.0 state:
 
-- only the local Claude Code runner is integrated
-- no Codex integration yet
+- the project-scoped Claude Code transparent integration is verified by a real
+  Claude Code E2E run
+- the Experimental Codex CLI integration PoC is implemented, but real CLI E2E
+  is not complete
+- ChatGPT/Codex Desktop currently has no observed Project Guard Hook trigger
 - no TRAE integration yet
 - no MCP server
 - no multi-Agent provider framework
@@ -237,6 +290,7 @@ For the v0.2.0 state:
 
 ## Status
 
-Project Guard is experimental v0.2.0. This release validates project-scoped
-transparent Claude Code activation while preserving the local-first governance
-model and the explicit `project-guard run` fallback.
+Project Guard is experimental v0.3.0. This release validates project-scoped
+transparent Claude Code activation and includes an experimental Codex CLI PoC
+whose real CLI E2E remains incomplete, while preserving the local-first
+governance model and the explicit `project-guard run` fallback.

@@ -4,13 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "project-guard"
-version = "0.2.0"
+version = "0.3.0"
 description = "Small, local-first AI coding governance CLI"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
     "pydantic>=2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -21,3 +27,9 @@ packages = ["project_guard"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"project_guard/cli.py" = ["B008"]
+"tests/evals/domain_exclusion/repo/src/sample_app/cli.py" = ["B008"]
+"tests/test_instructions.py" = ["C408"]
+"tests/test_reviewer.py" = ["C408"]

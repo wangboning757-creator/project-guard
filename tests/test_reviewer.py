@@ -637,8 +637,10 @@ def test_remediation_constraints_from_violations_and_warnings():
     constraints = build_remediation_constraints(
         compliance,
         [
-            "possible duplicate implementation: new `X` in cli.py "
-            "overlaps existing capability in search/tavily.py"
+            (
+                "possible duplicate implementation: new `X` in cli.py "
+                "overlaps existing capability in search/tavily.py"
+            )
         ],
     )
     assert any(

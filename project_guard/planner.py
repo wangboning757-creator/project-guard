@@ -392,7 +392,6 @@ def build_engineering_contract(
         if cap_files
         else []
     )
-    cli_intent = _has_cli_intent(request, keywords)
     cli_entry = next(
         (
             m.path
@@ -421,8 +420,10 @@ def build_engineering_contract(
             "Preserve existing behavior outside the requested change.",
             "Reuse existing capability where available.",
             "Avoid unrelated refactoring.",
-            "Do not add dependencies or abstractions unless required by "
-            "the current goal.",
+            (
+                "Do not add dependencies or abstractions unless required by "
+                "the current goal."
+            ),
         ],
         # Project Guard does not guess business scope or product ambiguity.
         # The Coding Agent forms assumptions and unresolved questions.

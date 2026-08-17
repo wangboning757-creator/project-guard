@@ -17,8 +17,8 @@ from .config import (
     LARGE_FILE_LINES,
 )
 from .models import (
-    ContractAmendment,
     ComplexitySignal,
+    ContractAmendment,
     EngineeringContract,
     PlanCompliance,
     PlanSnapshot,
@@ -370,8 +370,10 @@ def format_review(
         ]
         reasons.extend(extra_reasons)
     lines = [
-        f"Git diff review: {result.changed_files} file(s) changed "
-        f"(+{result.total_added}/-{result.total_deleted})",
+        (
+            f"Git diff review: {result.changed_files} file(s) changed "
+            f"(+{result.total_added}/-{result.total_deleted})"
+        ),
         f"Added files: {result.added_files}",
         f"Deleted files: {result.deleted_files}",
         f"Dependency files changed: {'yes' if result.dependency_changed else 'no'}",
@@ -573,14 +575,11 @@ def check_complexity(
     ]
     new_classes = 0
     new_functions = 0
-    for _, (classes, functions) in _new_top_level_symbols(
-        root, result
-    ).items():
+    for classes, functions in _new_top_level_symbols(root, result).values():
         new_classes += len(classes)
         new_functions += len(functions)
 
     over_budget = []
-    new_symbols = new_classes + new_functions
     if (
         len(production)
         > budget.preferred_max_touched_production_files + 2
@@ -660,8 +659,10 @@ def build_remediation_constraints(
                     severity=severity,
                     constraints=[
                         "Keep changes inside the contract scope.",
-                        "Request a scope amendment before modifying files "
-                        "outside the contract.",
+                        (
+                            "Request a scope amendment before modifying files "
+                            "outside the contract."
+                        ),
                     ],
                     evidence=[violation],
                     requires_scope_amendment=[file],
@@ -700,19 +701,29 @@ def format_complexity(signal: ComplexitySignal, contract: EngineeringContract) -
         f"Complexity Signal: {signal.level}",
         "",
         "Complexity Budget:",
-        f"- preferred touched production files: "
-        f"{budget.preferred_max_touched_production_files} | "
-        f"actual: {signal.touched_production_files}",
-        f"- preferred new production files: "
-        f"{budget.preferred_new_production_files} | "
-        f"actual: {signal.new_production_files}",
-        f"- preferred new abstractions: "
-        f"{budget.preferred_new_abstractions} | "
-        f"actual new top-level classes: {signal.new_top_level_classes}",
-        f"- new top-level functions: {signal.new_top_level_functions} "
-        "(informational)",
-        f"- dependency changes: "
-        f"{'yes' if signal.dependency_changed else 'no'}",
+        (
+            f"- preferred touched production files: "
+            f"{budget.preferred_max_touched_production_files} | "
+            f"actual: {signal.touched_production_files}"
+        ),
+        (
+            f"- preferred new production files: "
+            f"{budget.preferred_new_production_files} | "
+            f"actual: {signal.new_production_files}"
+        ),
+        (
+            f"- preferred new abstractions: "
+            f"{budget.preferred_new_abstractions} | "
+            f"actual new top-level classes: {signal.new_top_level_classes}"
+        ),
+        (
+            f"- new top-level functions: {signal.new_top_level_functions} "
+            "(informational)"
+        ),
+        (
+            f"- dependency changes: "
+            f"{'yes' if signal.dependency_changed else 'no'}"
+        ),
     ]
     return "\n".join(lines)
 
@@ -733,8 +744,10 @@ def format_quality_signals(
         f"- New production files: {len(new_files)}",
         f"- New top-level classes: {new_classes}",
         f"- New top-level functions: {new_functions}",
-        f"- Dependency files changed: "
-        f"{'yes' if result.dependency_changed else 'no'}",
+        (
+            f"- Dependency files changed: "
+            f"{'yes' if result.dependency_changed else 'no'}"
+        ),
     ]
     for rel, (classes, functions) in symbols.items():
         names = classes + functions

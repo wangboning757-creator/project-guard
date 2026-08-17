@@ -6,3 +6,10 @@ __pycache__/
 dist/
 build/
 .claude/
+.tmp-pytest-cache/
+.project-guard-plan.json
+.project-guard-contract.json
+.project-guard-instructions.md
+.project-guard-skill.md
+.project-guard-agent-prompt.md
+.project-guard-task-contract.json

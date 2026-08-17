@@ -31,7 +31,7 @@ def _requirements_names(path: Path) -> list[str]:
     names = []
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         line = line.strip()
-        if not line or line.startswith("#") or line.startswith("-"):
+        if not line or line.startswith(("#", "-")):
             continue
         names.append(line.split()[0])
     return names

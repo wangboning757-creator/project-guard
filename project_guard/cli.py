@@ -8,7 +8,15 @@ from pathlib import Path
 
 import typer
 
-from . import claude_integration, instructions, planner, reviewer, scanner, scoring
+from . import (
+    claude_integration,
+    codex_integration,
+    instructions,
+    planner,
+    reviewer,
+    scanner,
+    scoring,
+)
 from . import context as context_mod
 
 app = typer.Typer(
@@ -244,10 +252,44 @@ def init_claude(
     typer.echo("claude")
 
 
+@app.command("init-codex")
+def init_codex(
+    path: Path = typer.Argument(".", help="Git project directory"),
+):
+    """Install project-scoped Codex CLI transparent activation."""
+    try:
+        result = codex_integration.install_codex_integration(path)
+    except codex_integration.CodexIntegrationError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("Project Guard Codex CLI integration installed.")
+    typer.echo("")
+    typer.echo(f"Repository: {result.root}")
+    typer.echo("")
+    typer.echo("Installed/updated:")
+    hooks_status = "updated" if result.hooks_changed else "already present"
+    typer.echo(
+        f"- {result.hooks_path.relative_to(result.root)} ({hooks_status})"
+    )
+    typer.echo("")
+    typer.echo(
+        "First use: Codex may ask you to review and trust the project Hook."
+    )
+    typer.echo("")
+    typer.echo("Normal use:")
+    typer.echo("codex")
+
+
 @app.command("claude-hook", hidden=True)
 def claude_hook():
     """Internal Claude Code UserPromptSubmit hook entry point."""
     raise typer.Exit(claude_integration.run_user_prompt_hook())
+
+
+@app.command("codex-hook", hidden=True)
+def codex_hook():
+    """Internal Codex CLI UserPromptSubmit hook entry point."""
+    raise typer.Exit(codex_integration.run_user_prompt_hook())
 
 
 @app.command()
