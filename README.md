@@ -6,7 +6,7 @@ structured contracts, and an independent diff review - so a Coding Agent
 (such as Claude Code) can implement the user's actual requirement as the
 Smallest Safe Change.
 
-*Experimental v0.1.0*
+*Experimental v0.2.0*
 
 ## Why Project Guard
 
@@ -32,7 +32,23 @@ Requires Python 3.12+. Install from a local checkout:
 pip install -e .
 ```
 
-Then run a governed coding task with local Claude Code:
+For transparent Claude Code activation, set up the repository once:
+
+```bash
+project-guard init-claude .
+claude
+```
+
+Then submit a normal natural-language coding request in Claude Code, for
+example:
+
+```text
+Add a CLI option to limit the maximum number of search queries used in an ask run.
+```
+
+After the one-time setup, Project Guard activates automatically through the
+project-scoped Claude Code hook. For the explicit, fully governed runner,
+which remains the reliable fallback, use:
 
 ```bash
 project-guard run . "Add a CLI option to limit the maximum number of search queries used in an ask run."
@@ -73,6 +89,9 @@ Responsibilities are deliberately separated:
 
 Project Guard does not prove semantic correctness, and it does not claim to
 choose the "best" implementation.
+
+`prepare` may be triggered explicitly or automatically by the project-scoped
+Claude Code hook.
 
 ## Core Principles
 
@@ -135,7 +154,7 @@ project-guard score PATH     AI coding readiness score
 - when Claude exits successfully, Project Guard validates the Task Contract
   and runs the final review automatically
 
-Experimental transparent activation is available for Claude Code through a
+v0.2.0 adds transparent project-scoped activation for Claude Code through a
 one-time project setup:
 
 ```bash
@@ -152,18 +171,20 @@ claude
 The project-scoped `UserPromptSubmit` hook receives the exact submitted prompt,
 resolves the Git repository root, runs the existing `prepare` workflow, and
 adds short governance context for Claude. All prompts in an opted-in
-repository currently trigger preparation, including ordinary questions. Claude
-following the generated instructions and maintaining the Task Contract remains
-model-guided; Project Guard review remains the independent final audit.
+repository currently trigger preparation, including ordinary questions. There
+is intentionally no coding-intent classifier in v0.2.0. Claude following the
+generated instructions and maintaining the Task Contract remains model-guided;
+Project Guard review remains the independent final audit.
 
 The setup only modifies the target repository's `.claude/` configuration. It
 does not modify `~/.claude/`. `project-guard run` remains the reliable explicit
 fallback for environments without this hook integration.
 
-Known UX limitation: Claude Code currently stays in its interactive session
-after completing a task. The user exits the session (for example with
-`/exit`) before Project Guard resumes and runs the final review. Project
-Guard does not detect Claude's completion automatically.
+Known UX limitation: when using `project-guard run`, Claude Code currently
+stays in its interactive session after completing a task. The user must exit
+the session (for example with `/exit`) before Project Guard resumes and runs
+the final review. Project Guard does not detect Claude's completion
+automatically.
 
 ## Contracts and Governance
 
@@ -201,7 +222,7 @@ alone does not.
 
 ## Current Scope / Non-goals
 
-For the v0.1.0 state:
+For the v0.2.0 state:
 
 - only the local Claude Code runner is integrated
 - no Codex integration yet
@@ -216,5 +237,6 @@ For the v0.1.0 state:
 
 ## Status
 
-Project Guard is experimental v0.1.0. This release is intended to validate a
-small, local-first governance layer around real Coding Agent workflows.
+Project Guard is experimental v0.2.0. This release validates project-scoped
+transparent Claude Code activation while preserving the local-first governance
+model and the explicit `project-guard run` fallback.
