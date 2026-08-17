@@ -8,9 +8,8 @@ from pathlib import Path
 
 import typer
 
-from . import __version__
+from . import claude_integration, instructions, planner, reviewer, scanner, scoring
 from . import context as context_mod
-from . import instructions, planner, reviewer, scanner, scoring
 
 app = typer.Typer(
     help="Small local-first AI coding governance CLI.",
@@ -92,7 +91,7 @@ def _claude_command(executable: str, prompt_text: str) -> list[str]:
 
 def _run_claude(cmd: list[str], cwd: Path) -> int:
     """Launch Claude Code with inherited terminal stdio (interactive)."""
-    return subprocess.run(cmd, cwd=str(cwd)).returncode
+    return subprocess.run(cmd, cwd=str(cwd), check=False).returncode
 
 
 @app.command()
@@ -219,6 +218,36 @@ def prepare(
     typer.echo("")
     typer.echo("Agent handoff:")
     typer.echo(".project-guard-agent-prompt.md")
+
+
+@app.command("init-claude")
+def init_claude(
+    path: Path = typer.Argument(".", help="Git project directory"),
+):
+    """Install project-scoped Claude Code transparent activation."""
+    try:
+        result = claude_integration.install_claude_integration(path)
+    except claude_integration.ClaudeIntegrationError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("Project Guard Claude integration installed.")
+    typer.echo("")
+    typer.echo(f"Repository: {result.root}")
+    typer.echo("")
+    typer.echo("Installed/updated:")
+    settings_status = "updated" if result.settings_changed else "already present"
+    claude_md_status = "updated" if result.claude_md_changed else "already present"
+    typer.echo(f"- {result.settings_path.relative_to(result.root)} ({settings_status})")
+    typer.echo(f"- {result.claude_md_path.relative_to(result.root)} ({claude_md_status})")
+    typer.echo("")
+    typer.echo("Normal use:")
+    typer.echo("claude")
+
+
+@app.command("claude-hook", hidden=True)
+def claude_hook():
+    """Internal Claude Code UserPromptSubmit hook entry point."""
+    raise typer.Exit(claude_integration.run_user_prompt_hook())
 
 
 @app.command()

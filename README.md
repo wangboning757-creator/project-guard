@@ -102,6 +102,9 @@ project-guard run PATH "REQUEST"
 project-guard prepare PATH "REQUEST"
     Generate the governance handoff without launching an Agent
 
+project-guard init-claude PATH
+    Install experimental project-scoped Claude Code activation
+
 project-guard review PATH
     Review the git diff against Guard / Task contracts
     (--contract, --task-contract, --plan, --instructions, --skill)
@@ -131,6 +134,31 @@ project-guard score PATH     AI coding readiness score
 - Claude creates or updates the Agent-owned Task Contract
 - when Claude exits successfully, Project Guard validates the Task Contract
   and runs the final review automatically
+
+Experimental transparent activation is available for Claude Code through a
+one-time project setup:
+
+```bash
+project-guard init-claude .
+```
+
+After setup, use Claude Code normally:
+
+```text
+claude
+> Add a CLI option to ...
+```
+
+The project-scoped `UserPromptSubmit` hook receives the exact submitted prompt,
+resolves the Git repository root, runs the existing `prepare` workflow, and
+adds short governance context for Claude. All prompts in an opted-in
+repository currently trigger preparation, including ordinary questions. Claude
+following the generated instructions and maintaining the Task Contract remains
+model-guided; Project Guard review remains the independent final audit.
+
+The setup only modifies the target repository's `.claude/` configuration. It
+does not modify `~/.claude/`. `project-guard run` remains the reliable explicit
+fallback for environments without this hook integration.
 
 Known UX limitation: Claude Code currently stays in its interactive session
 after completing a task. The user exits the session (for example with
