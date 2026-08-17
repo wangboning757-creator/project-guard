@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from .config import LARGE_FILE_LINES, SOURCE_EXTENSIONS
 
@@ -189,7 +189,10 @@ class TaskContract(BaseModel):
     assumptions: list[str] = []
     unresolved_questions: list[str] = []
     planned_production_files: list[str] = []
-    scope_amendments: list[ContractAmendment] = []
+    scope_amendments: list[ContractAmendment] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("scope_amendments", "amendments"),
+    )
 
 
 class RemediationConstraint(BaseModel):

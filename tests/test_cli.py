@@ -335,6 +335,87 @@ def test_review_with_task_contract_approved(tmp_path):
     assert "Unplanned production file: workflow.py" not in result.output
 
 
+def test_review_with_amendments_alias_allows_cli_file(tmp_path):
+    repo = tmp_path
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "T")
+    routes = repo / "src" / "industry_research_agent" / "web" / "routes.py"
+    cli = repo / "src" / "industry_research_agent" / "cli.py"
+    routes.parent.mkdir(parents=True)
+    routes.write_text("def routes():\n    return None\n", encoding="utf-8")
+    cli.write_text("def ask():\n    return None\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "init")
+    cli.write_text(
+        "def ask():\n    return 'format'\n", encoding="utf-8"
+    )
+
+    contract = repo / "contract.json"
+    contract.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "original_request": "Add report format support",
+                "recommended_scope": [
+                    "src/industry_research_agent/web/routes.py"
+                ],
+                "possible_scope": [],
+                "avoid_modifying": [],
+                "new_dependency": "not justified",
+                "new_abstraction": "not justified",
+                "refactor": "not justified",
+            }
+        ),
+        encoding="utf-8",
+    )
+    task_contract = repo / "task-contract.json"
+    task_contract.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "original_request": "Add report format support",
+                "planned_production_files": [
+                    "src/industry_research_agent/cli.py"
+                ],
+                "amendments": [
+                    {
+                        "version": 1,
+                        "requested_files": [
+                            "src/industry_research_agent/cli.py"
+                        ],
+                        "reason": "User approved the CLI scope.",
+                        "safe_in_scope_alternative_exists": False,
+                        "status": "approved",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "review",
+            str(repo),
+            "--contract",
+            str(contract),
+            "--task-contract",
+            str(task_contract),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Status: PASS" in result.output
+    assert "src/industry_research_agent/cli.py" in result.output
+    assert (
+        "Unplanned production file: src/industry_research_agent/cli.py"
+        not in result.output
+    )
+    assert "requires scope amendment" not in result.output
+
+
 def test_review_task_contract_mismatch(tmp_path):
     repo = _init_repo_with_early_stop_diff(tmp_path)
     (repo / "task.json").write_text(

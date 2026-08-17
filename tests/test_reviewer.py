@@ -786,6 +786,45 @@ def test_task_contract_planned_files_do_not_expand_scope(repo):
     )
 
 
+def test_task_contract_amendments_alias_preserves_canonical_field(tmp_path):
+    amendment = {
+        "version": 1,
+        "requested_files": ["workflow.py"],
+        "reason": "User approved the workflow scope.",
+        "safe_in_scope_alternative_exists": False,
+        "status": "approved",
+    }
+    canonical_path = tmp_path / "canonical.json"
+    canonical_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "original_request": "x",
+                "scope_amendments": [amendment],
+            }
+        ),
+        encoding="utf-8",
+    )
+    alias_path = tmp_path / "alias.json"
+    alias_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "original_request": "x",
+                "amendments": [amendment],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    canonical = load_task_contract(canonical_path)
+    alias = load_task_contract(alias_path)
+
+    assert canonical.scope_amendments == alias.scope_amendments
+    assert alias.model_dump()["scope_amendments"] == [amendment]
+    assert "amendments" not in alias.model_dump()
+
+
 def test_load_task_contract_errors(tmp_path):
     with pytest.raises(TaskContractError):
         load_task_contract(tmp_path / "missing.json")

@@ -111,7 +111,7 @@ The Task Contract is the Coding Agent's output, not Project Guard's.
 
 When the user approves a scope or requirement change, do not silently
 overwrite the previous understanding. Update the Task Contract's `revision`
-or append an `amendments` entry instead.
+or append a `scope_amendments` entry instead.
 
 # Scope Amendment
 
@@ -150,10 +150,14 @@ only thing that expands the Guard Contract's allowed scope:
 ```json
 {
   "version": 1,
-  "requested_files": ["..."],
-  "reason": "...",
-  "safe_in_scope_alternative_exists": false,
-  "status": "approved"
+  "scope_amendments": [
+    {
+      "requested_files": ["..."],
+      "reason": "...",
+      "safe_in_scope_alternative_exists": false,
+      "status": "approved"
+    }
+  ]
 }
 ```
 
