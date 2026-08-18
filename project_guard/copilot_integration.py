@@ -28,6 +28,13 @@ HOOK_PROGRESS_CONTEXT = (
     "production files, and use the Smallest Safe Change with existing capability "
     "reuse."
 )
+HOOK_TRANSFORM_CONTEXT = (
+    "[Project Guard]\n"
+    "This request was prepared. Read .project-guard-instructions.md and "
+    ".project-guard-skill.md; inspect the Guard Contract and plan; create or "
+    "update .project-guard-task-contract.json before production edits; use the "
+    "Smallest Safe Change and reuse existing capability."
+)
 
 
 class CopilotIntegrationError(RuntimeError):
@@ -117,7 +124,7 @@ def _merge_hooks(path: Path) -> tuple[dict[str, Any], bool]:
         return (
             {
                 "version": 1,
-                "hooks": {"userPromptSubmitted": [_hook_handler()]},
+                "hooks": {"userPromptTransformed": [_hook_handler()]},
             },
             True,
         )
@@ -134,18 +141,54 @@ def _merge_hooks(path: Path) -> tuple[dict[str, Any], bool]:
         )
 
     hooks = data["hooks"]
-    prompt_hooks = hooks.get("userPromptSubmitted")
-    if not isinstance(prompt_hooks, list):
-        raise CopilotIntegrationError(
-            f"cannot safely update unknown Copilot hook configuration: {path}"
-        )
-    if any(not isinstance(item, dict) for item in prompt_hooks):
-        raise CopilotIntegrationError(f"{path} has invalid userPromptSubmitted hooks")
-    if any(_is_project_guard_hook(item) for item in prompt_hooks):
-        return data, False
-    raise CopilotIntegrationError(
-        f"{path} is valid JSON but is not a recognized Project Guard configuration"
+    for event_name in ("userPromptSubmitted", "userPromptTransformed"):
+        event_hooks = hooks.get(event_name)
+        if event_hooks is not None:
+            if not isinstance(event_hooks, list):
+                raise CopilotIntegrationError(
+                    f"cannot safely update unknown Copilot hook configuration: {path}"
+                )
+            if any(not isinstance(item, dict) for item in event_hooks):
+                raise CopilotIntegrationError(
+                    f"{path} has invalid {event_name} hooks"
+                )
+
+    old_hooks = hooks.get("userPromptSubmitted", [])
+    transformed_hooks = hooks.get("userPromptTransformed", [])
+    old_owned = any(_is_project_guard_hook(item) for item in old_hooks)
+    transformed_owned = any(
+        _is_project_guard_hook(item) for item in transformed_hooks
     )
+    if not old_owned and not transformed_owned:
+        raise CopilotIntegrationError(
+            "cannot safely update unknown Copilot hook configuration: "
+            f"{path} is valid JSON but is not a recognized Project Guard configuration"
+        )
+
+    changed = False
+    if old_owned:
+        hooks["userPromptSubmitted"] = [
+            item for item in old_hooks if not _is_project_guard_hook(item)
+        ]
+        changed = True
+
+    retained_transformed = [
+        item for item in transformed_hooks if not _is_project_guard_hook(item)
+    ]
+    if transformed_owned:
+        first_owned = next(
+            index
+            for index, item in enumerate(transformed_hooks)
+            if _is_project_guard_hook(item)
+        )
+        retained_transformed.insert(first_owned, _hook_handler())
+        if transformed_hooks != retained_transformed:
+            changed = True
+    else:
+        retained_transformed.append(_hook_handler())
+        changed = True
+    hooks["userPromptTransformed"] = retained_transformed
+    return data, changed
 
 
 def install_copilot_integration(path: Path) -> CopilotInstallResult:
@@ -181,6 +224,34 @@ def _verify_artifacts(root: Path) -> None:
         )
 
 
+def _read_payload(input_stream: TextIO) -> dict[str, Any]:
+    try:
+        payload = json.loads(input_stream.read())
+    except json.JSONDecodeError as exc:
+        raise CopilotIntegrationError(f"hook payload is invalid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise CopilotIntegrationError("hook payload must be a JSON object")
+    return payload
+
+
+def _prepare_from_payload(
+    payload: dict[str, Any],
+    *,
+    git_runner: Callable[..., Any],
+    prepare_runner: Callable[[Path, str], Any] | None,
+) -> tuple[Path, str]:
+    prompt = payload.get("prompt")
+    cwd = payload.get("cwd")
+    if not isinstance(prompt, str) or not prompt:
+        raise CopilotIntegrationError("hook payload is missing prompt")
+    if not isinstance(cwd, str) or not cwd:
+        raise CopilotIntegrationError("hook payload is missing cwd")
+    root = resolve_git_root(Path(cwd), runner=git_runner)
+    (prepare_runner or _prepare_task)(root, prompt)
+    _verify_artifacts(root)
+    return root, prompt
+
+
 def run_user_prompt_hook(
     *,
     stdin: TextIO | None = None,
@@ -194,24 +265,12 @@ def run_user_prompt_hook(
     output_stream = stdout or sys.stdout
     error_stream = stderr or sys.stderr
     try:
-        try:
-            payload = json.loads(input_stream.read())
-        except json.JSONDecodeError as exc:
-            raise CopilotIntegrationError(
-                f"hook payload is invalid JSON: {exc}"
-            ) from exc
-        if not isinstance(payload, dict):
-            raise CopilotIntegrationError("hook payload must be a JSON object")
-        prompt = payload.get("prompt")
-        cwd = payload.get("cwd")
-        if not isinstance(prompt, str) or not prompt:
-            raise CopilotIntegrationError("hook payload is missing prompt")
-        if not isinstance(cwd, str) or not cwd:
-            raise CopilotIntegrationError("hook payload is missing cwd")
-
-        root = resolve_git_root(Path(cwd), runner=git_runner)
-        (prepare_runner or _prepare_task)(root, prompt)
-        _verify_artifacts(root)
+        payload = _read_payload(input_stream)
+        _prepare_from_payload(
+            payload,
+            git_runner=git_runner,
+            prepare_runner=prepare_runner,
+        )
     except Exception as exc:  # noqa: BLE001
         # GitHub documents userPromptSubmitted command hooks as fail-open.
         error_stream.write(f"Project Guard Copilot Hook failed: {exc}\n")
@@ -224,6 +283,56 @@ def run_user_prompt_hook(
     output_stream.write(
         json.dumps({"type": "progress", "message": HOOK_PROGRESS_CONTEXT})
         + "\n"
+    )
+    output_stream.flush()
+    return 0
+
+
+def run_user_prompt_transformed_hook(
+    *,
+    stdin: TextIO | None = None,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+    git_runner: Callable[..., Any] = subprocess.run,
+    prepare_runner: Callable[[Path, str], Any] | None = None,
+) -> int:
+    """Handle Copilot's model-facing userPromptTransformed payload."""
+    input_stream = stdin or sys.stdin
+    output_stream = stdout or sys.stdout
+    error_stream = stderr or sys.stderr
+    try:
+        payload = _read_payload(input_stream)
+        transformed_prompt = payload.get("transformedPrompt")
+        if not isinstance(transformed_prompt, str):
+            raise CopilotIntegrationError(
+                "hook payload is missing transformedPrompt"
+            )
+        if HOOK_TRANSFORM_CONTEXT in transformed_prompt:
+            root = resolve_git_root(
+                Path(payload.get("cwd", "")), runner=git_runner
+            )
+            _verify_artifacts(root)
+            modified_prompt = transformed_prompt
+        else:
+            _, prompt = _prepare_from_payload(
+                payload,
+                git_runner=git_runner,
+                prepare_runner=prepare_runner,
+            )
+            base_prompt = transformed_prompt
+            if prompt not in base_prompt:
+                base_prompt = (
+                    prompt if not base_prompt else f"{prompt}\n\n{base_prompt}"
+                )
+            modified_prompt = f"{base_prompt}\n\n{HOOK_TRANSFORM_CONTEXT}"
+    except Exception as exc:  # noqa: BLE001
+        # userPromptTransformed has no documented deny field; do not invent one.
+        error_stream.write(f"Project Guard Copilot Hook failed: {exc}\n")
+        error_stream.flush()
+        return 1
+
+    output_stream.write(
+        json.dumps({"modifiedTransformedPrompt": modified_prompt}) + "\n"
     )
     output_stream.flush()
     return 0

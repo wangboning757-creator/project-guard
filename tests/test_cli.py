@@ -3,9 +3,16 @@ import subprocess
 
 from typer.testing import CliRunner
 
+from project_guard import __version__
 from project_guard.cli import app
 
 runner = CliRunner()
+
+
+def test_version_option():
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert result.output.strip() == __version__
 
 
 def test_inspect_command(tmp_path):

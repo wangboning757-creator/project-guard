@@ -5,7 +5,7 @@
 - Date: 2026-08-18
 - Environment: Windows
 - Agent: Cline CLI
-- Test repository: `D:\project-guard-cline-e2e`
+- Test repository: a separate Windows Git test repository
 - Project Plugin: `.cline/plugins/project-guard.js`
 - Launch mode: plain `cline`, without `--plugin` or manual loading
 

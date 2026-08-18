@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 
 from . import (
+    __version__,
     claude_integration,
     cline_integration,
     cline_plugin,
@@ -19,6 +20,7 @@ from . import (
     reviewer,
     scanner,
     scoring,
+    trae_integration,
 )
 from . import context as context_mod
 
@@ -26,6 +28,25 @@ app = typer.Typer(
     help="Small local-first AI coding governance CLI.",
     no_args_is_help=True,
 )
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def cli_options(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        help="Show the installed Project Guard version.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """Global Project Guard CLI options."""
 
 
 def _write_artifact(path: Path, content: str, label: str) -> None:
@@ -300,7 +321,7 @@ def init_copilot(
     status = "updated" if result.hooks_changed else "already present"
     typer.echo(f"- {result.hooks_path.relative_to(result.root)} ({status})")
     typer.echo("")
-    typer.echo("Normal use: GitHub Copilot with repository Hooks enabled")
+    typer.echo("Normal use: GitHub Copilot CLI with repository Hooks enabled")
 
 
 @app.command("init-cline")
@@ -363,6 +384,28 @@ def init_cline_plugin(
     typer.echo("cline")
 
 
+@app.command("init-trae")
+def init_trae(
+    path: Path = typer.Argument(".", help="Git project directory"),
+):
+    """Install experimental TRAE IDE project Hook activation."""
+    try:
+        result = trae_integration.install_trae_integration(path)
+    except trae_integration.TraeIntegrationError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("Experimental TRAE IDE integration installed.")
+    typer.echo("")
+    typer.echo(f"Repository: {result.root}")
+    typer.echo("")
+    status = "updated" if result.hooks_changed else "already present"
+    typer.echo(f"- {result.hooks_path.relative_to(result.root)} ({status})")
+    typer.echo("")
+    typer.echo(
+        "Next: TRAE Settings > Hooks > Project > enable configured project Hooks"
+    )
+
+
 @app.command("claude-hook", hidden=True)
 def claude_hook():
     """Internal Claude Code UserPromptSubmit hook entry point."""
@@ -377,14 +420,20 @@ def codex_hook():
 
 @app.command("copilot-hook", hidden=True)
 def copilot_hook():
-    """Internal GitHub Copilot userPromptSubmitted Hook entry point."""
-    raise typer.Exit(copilot_integration.run_user_prompt_hook())
+    """Internal GitHub Copilot userPromptTransformed Hook entry point."""
+    raise typer.Exit(copilot_integration.run_user_prompt_transformed_hook())
 
 
 @app.command("cline-hook", hidden=True)
 def cline_hook():
     """Internal Cline CLI UserPromptSubmit Hook entry point."""
     raise typer.Exit(cline_integration.run_user_prompt_hook())
+
+
+@app.command("trae-hook", hidden=True)
+def trae_hook():
+    """Internal TRAE IDE UserPromptSubmit Hook entry point."""
+    raise typer.Exit(trae_integration.run_user_prompt_hook())
 
 
 @app.command()

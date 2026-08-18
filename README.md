@@ -6,7 +6,7 @@ structured contracts, and an independent diff review - so a Coding Agent
 (such as Claude Code) can implement the user's actual requirement as the
 Smallest Safe Change.
 
-*Experimental v0.4.0*
+*Experimental v0.5.0*
 
 ## Why Project Guard
 
@@ -31,6 +31,9 @@ Requires Python 3.12+. Install from a local checkout:
 ```bash
 pip install -e .
 ```
+
+This is a local-checkout installation path. Project Guard has not been
+published to PyPI in this release.
 
 For the experimental Codex CLI integration, set up the repository once:
 
@@ -160,6 +163,9 @@ project-guard init-cline-plugin PATH
 project-guard init-cline PATH
     Install the legacy Experimental Cline file-hook integration
 
+project-guard init-trae PATH
+    Install Experimental TRAE IDE project Hook configuration
+
 project-guard review PATH
     Review the git diff against Guard / Task contracts
     (--contract, --task-contract, --plan, --instructions, --skill)
@@ -190,7 +196,7 @@ project-guard score PATH     AI coding readiness score
 - when Claude exits successfully, Project Guard validates the Task Contract
   and runs the final review automatically
 
-v0.4.0 includes transparent project-scoped activation for Claude Code through a
+v0.5.0 includes transparent project-scoped activation for Claude Code through a
 one-time project setup:
 
 ```bash
@@ -208,7 +214,7 @@ The project-scoped `UserPromptSubmit` hook receives the exact submitted prompt,
 resolves the Git repository root, runs the existing `prepare` workflow, and
 adds short governance context for Claude. All prompts in an opted-in
 repository currently trigger preparation, including ordinary questions. There
-is intentionally no coding-intent classifier in v0.4.0. Claude following the
+is intentionally no coding-intent classifier in v0.5.0. Claude following the
 generated instructions and maintaining the Task Contract remains model-guided;
 Project Guard review remains the independent final audit.
 
@@ -224,7 +230,7 @@ automatically.
 
 ## Codex CLI Integration
 
-v0.4.0 includes an experimental project-scoped Codex CLI integration:
+v0.5.0 includes an experimental project-scoped Codex CLI integration:
 
 ```bash
 project-guard init-codex .
@@ -259,43 +265,59 @@ before editing `app.py`, added focused tests, and completed the coding task.
 This records the observed sequence only. It does not prove that CLI trust is
 required for Desktop, or that trust is shared across CLI and Desktop.
 
-## GitHub Copilot Integration
+## GitHub Copilot CLI Integration
 
-v0.4.0 includes a limited experimental project-scoped GitHub Copilot integration:
+Current status: **Experimental — real coding E2E verified** for the tested
+Windows GitHub Copilot CLI environment. The Agent recognized the Task Contract
+requirement, but the file was created after the production edits in this run;
+Task Contract ordering remains model-guided. The E2E record is documented in
+[`docs/copilot-cli-e2e.md`](docs/copilot-cli-e2e.md).
+
+Plain-text status: GitHub Copilot CLI is Experimental; real coding E2E
+verified. GitHub Copilot IDE remains Experimental; limited integration.
+
+v0.5.0 includes an experimental GitHub Copilot CLI transparent Prompt-path PoC:
 
 ```bash
 project-guard init-copilot .
 ```
 
+GitHub Copilot CLI must be installed and authenticated by the user. Project
+Guard does not install Copilot CLI, handle GitHub credentials, or manage a
+Copilot subscription.
+
 This installs the repository-level `.github/hooks/project-guard.json` using
-GitHub's official `version: 1` Hook format and the `userPromptSubmitted` event.
-The Hook receives the exact submitted prompt and `cwd`, resolves the Git
-repository root, and runs the existing `prepare` workflow. It does not modify
-user-level Copilot configuration.
+GitHub's official `version: 1` Hook format and the `userPromptTransformed` event.
+The Hook reads Copilot's `prompt` and `cwd`, resolves the Git repository root,
+runs the existing `prepare` workflow, and returns a
+`modifiedTransformedPrompt` containing the Copilot prompt plus a short
+governance message. The Project Guard-owned configuration uses this event as
+the single transparent prepare path, so it does not also run the old
+`userPromptSubmitted` prepare Hook.
 
-For command-configured `userPromptSubmitted` Hooks, GitHub currently drops the
-Hook's model-facing output; `additionalContext` is not an available injection
-field for this configuration. Project Guard therefore emits only an official
-display-only progress message after prepare. This PoC does not claim automatic
-governance context injection into the Copilot model.
+The command Hook does not claim byte-level raw Prompt preservation: Project
+Guard does not further modify the prompt it receives. The governance message
+asks the Agent to read the generated instructions and Skill, inspect the
+Contract and plan, and create the Task Contract before production edits. The
+full Skill and Contract are not copied into the transformed Prompt.
 
-There is no `preToolUse` enforcement in this integration. Coding Agent
-adherence to the generated instructions and Task Contract remains
-model-guided, while Project Guard Review remains the independent final
-Git Diff audit. Real GitHub Copilot full governance-loop dogfood has not been
-performed. This integration is limited to the deterministic prepare path; it
-is not full governance support.
+The status paragraph below records the earlier deterministic-only state.
 
-Although Copilot `preToolUse` can deny tool calls in supported environments,
-using it for full Project Guard scope enforcement would require session/task
-association, tool schema handling, shell-bypass handling, and additional
-state. That work is intentionally outside this release.
+Historical status: **Experimental PoC — transparent Prompt path implemented;
+real GitHub Copilot CLI E2E not yet verified**. This records the pre-E2E state;
+Copilot IDE remains a separate limited experimental path.
+
+There is no new `preToolUse` enforcement, shell enforcement, MCP enforcement,
+or automatic Review in this integration. Coding Agent adherence remains
+model-guided, while Project Guard Review remains the independent final Git
+Diff audit. The `userPromptTransformed` Hook is a transformation entry point,
+not a documented blocking mechanism.
 
 ## Cline CLI Integration
 
 ### Recommended: Cline CLI Plugin runtime
 
-v0.4.0 includes an experimental project-scoped Cline CLI Plugin integration:
+v0.5.0 includes an experimental project-scoped Cline CLI Plugin integration:
 
 ```bash
 project-guard init-cline-plugin .
@@ -349,14 +371,56 @@ for new setups.
 
 ### Integration support summary
 
+Current Copilot product-surface status:
+
+| Platform | Status |
+| --- | --- |
+| GitHub Copilot CLI | Experimental — real coding E2E verified |
+| GitHub Copilot IDE | Experimental — limited integration |
+
+Current platform support matrix:
+
 | Platform | Integration | Status |
 | --- | --- | --- |
 | Claude Code | project-level `UserPromptSubmit` | Verified — real coding E2E |
 | Codex CLI | project `.codex` Hook | Experimental — real coding E2E verified |
 | Codex Desktop | project `.codex` Hook | Experimental — real coding E2E verified |
-| Cline CLI | project-local Plugin / `beforeModel` | Experimental — real coding E2E verified |
-| GitHub Copilot | `userPromptSubmitted` prepare | Experimental — limited integration |
-| Cline CLI | file Hook experiment | Legacy experimental |
+| Cline CLI Plugin | project-local Plugin / `beforeModel` | Experimental — real coding E2E verified |
+| TRAE IDE | project `.trae` Hook | Experimental — real coding E2E verified |
+| GitHub Copilot CLI | project `.github/hooks` `userPromptTransformed` | Experimental — real coding E2E verified |
+| GitHub Copilot IDE | repository Hook / limited path | Experimental — limited integration |
+| Cline file Hook | file Hook experiment | Legacy experimental |
+
+## TRAE IDE Integration
+
+v0.5.0 includes an experimental project-scoped TRAE IDE integration:
+
+```bash
+project-guard init-trae .
+```
+
+This installs `.trae/hooks.json` with a `UserPromptSubmit` Hook. After
+installation, open TRAE's `Settings > Hooks > Project` and enable the
+configured project Hooks. The installation command does not enable them
+automatically.
+
+Real Windows coding E2E was verified for the tested TRAE IDE environment. The
+observed flow ran Project Guard `prepare`, generated the five Guard artifacts,
+and produced an observable governance effect in the Agent workflow. During
+the coding task, TRAE modified the requested files, created a Task Contract,
+added a focused test, and completed the CLI smoke check.
+
+The E2E record is documented in
+[`docs/trae-e2e.md`](docs/trae-e2e.md).
+
+Current limitations:
+
+- project Hooks require manual enablement in the observed TRAE environment
+- only TRAE IDE on Windows has been tested
+- TRAE does not provide a byte-level raw Prompt guarantee
+- Task Contract creation remains Agent/model-guided
+- there is no PreToolUse, shell, MCP, or automatic Review enforcement
+- Stop-based Review and enterprise deployment have not been verified
 
 ## Contracts and Governance
 
@@ -398,7 +462,7 @@ of structural and governance signals, not a proof of semantic correctness.
 
 ## Current Scope / Non-goals
 
-For the v0.4.0 state:
+For the v0.5.0 state:
 
 - the project-scoped Claude Code transparent integration is verified by a real
   Claude Code E2E run
@@ -411,7 +475,12 @@ For the v0.4.0 state:
   discovery
 - an earlier Codex Desktop experiment did not observe the Hook; a later task
   in the same trusted project did
-- no TRAE integration yet
+- the Experimental TRAE IDE integration has verified real Windows coding E2E
+  evidence; project Hooks require manual enablement in TRAE Settings
+- the Experimental GitHub Copilot CLI integration has verified real coding E2E
+  evidence; Task Contract ordering remains model-guided
+- GitHub Copilot IDE remains a separate limited integration and is not covered
+  by the Copilot CLI E2E result
 - no MCP server
 - no multi-Agent provider framework
 - no IDE plugin
@@ -422,7 +491,7 @@ For the v0.4.0 state:
 
 ## Status
 
-Project Guard is experimental v0.4.0. This release records verified real coding
-E2E evidence for Claude Code, Codex CLI, Codex Desktop, and the Cline CLI
-Plugin, while preserving the local-first governance model and the explicit
-`project-guard run` fallback.
+Project Guard is experimental v0.5.0. This release records verified real coding
+E2E evidence for Claude Code, Codex CLI, Codex Desktop, the Cline CLI Plugin,
+and the tested TRAE IDE environment, while preserving the local-first
+governance model and the explicit `project-guard run` fallback.
