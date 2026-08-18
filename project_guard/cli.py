@@ -10,7 +10,10 @@ import typer
 
 from . import (
     claude_integration,
+    cline_integration,
+    cline_plugin,
     codex_integration,
+    copilot_integration,
     instructions,
     planner,
     reviewer,
@@ -280,6 +283,86 @@ def init_codex(
     typer.echo("codex")
 
 
+@app.command("init-copilot")
+def init_copilot(
+    path: Path = typer.Argument(".", help="Git project directory"),
+):
+    """Install project-scoped GitHub Copilot repository Hook activation."""
+    try:
+        result = copilot_integration.install_copilot_integration(path)
+    except copilot_integration.CopilotIntegrationError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("Project Guard GitHub Copilot integration installed.")
+    typer.echo("")
+    typer.echo(f"Repository: {result.root}")
+    typer.echo("")
+    status = "updated" if result.hooks_changed else "already present"
+    typer.echo(f"- {result.hooks_path.relative_to(result.root)} ({status})")
+    typer.echo("")
+    typer.echo("Normal use: GitHub Copilot with repository Hooks enabled")
+
+
+@app.command("init-cline")
+def init_cline(
+    path: Path = typer.Argument(".", help="Git project directory"),
+):
+    """Install the legacy experimental Cline file-hook integration."""
+    try:
+        result = cline_integration.install_cline_integration(path)
+    except cline_integration.ClineIntegrationError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("Project Guard Cline CLI integration installed.")
+    typer.echo("")
+    typer.echo(f"Repository: {result.root}")
+    typer.echo("")
+    typer.echo("Installed/updated:")
+    windows_status = (
+        "updated"
+        if result.windows_hook_changed
+        else "already present"
+    )
+    posix_status = (
+        "updated" if result.posix_hook_changed else "already present"
+    )
+    typer.echo(
+        f"- {result.windows_hook_path.relative_to(result.root)} "
+        f"({windows_status})"
+    )
+    typer.echo(
+        f"- {result.posix_hook_path.relative_to(result.root)} "
+        f"({posix_status})"
+    )
+    typer.echo("")
+    typer.echo("Scope: Cline CLI project Hooks (.cline/hooks/)")
+    typer.echo("Normal use:")
+    typer.echo("cline")
+
+
+@app.command("init-cline-plugin")
+def init_cline_plugin(
+    path: Path = typer.Argument(".", help="Git project directory"),
+):
+    """Install the recommended experimental Cline CLI Plugin."""
+    try:
+        result = cline_plugin.install_cline_plugin(path)
+    except cline_plugin.ClinePluginIntegrationError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("Experimental Cline CLI Plugin installed.")
+    typer.echo("")
+    typer.echo(f"Repository: {result.root}")
+    status = "updated" if result.plugin_changed else "already present"
+    typer.echo(
+        f"- {result.plugin_path.relative_to(result.root)} ({status})"
+    )
+    typer.echo("")
+    typer.echo("Scope: project-local Cline CLI Plugin (.cline/plugins/)")
+    typer.echo("Normal use:")
+    typer.echo("cline")
+
+
 @app.command("claude-hook", hidden=True)
 def claude_hook():
     """Internal Claude Code UserPromptSubmit hook entry point."""
@@ -290,6 +373,18 @@ def claude_hook():
 def codex_hook():
     """Internal Codex CLI UserPromptSubmit hook entry point."""
     raise typer.Exit(codex_integration.run_user_prompt_hook())
+
+
+@app.command("copilot-hook", hidden=True)
+def copilot_hook():
+    """Internal GitHub Copilot userPromptSubmitted Hook entry point."""
+    raise typer.Exit(copilot_integration.run_user_prompt_hook())
+
+
+@app.command("cline-hook", hidden=True)
+def cline_hook():
+    """Internal Cline CLI UserPromptSubmit Hook entry point."""
+    raise typer.Exit(cline_integration.run_user_prompt_hook())
 
 
 @app.command()
