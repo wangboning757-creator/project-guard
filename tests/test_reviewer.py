@@ -323,7 +323,7 @@ def test_review_excludes_plan_and_instructions_files(repo):
     assert result.changed_files == 3
 
 
-def test_review_does_not_implicitly_ignore_instructions(repo):
+def test_review_ignores_owned_instructions_but_keeps_production_changes(repo):
     (repo / ".project-guard-instructions.md").write_text(
         "# instructions\n", encoding="utf-8"
     )
@@ -331,7 +331,8 @@ def test_review_does_not_implicitly_ignore_instructions(repo):
         "print('hi')\nprint('bye')\n", encoding="utf-8"
     )
     result = analyze_diff(repo)
-    assert ".project-guard-instructions.md" in result.changed_paths
+    assert ".project-guard-instructions.md" not in result.changed_paths
+    assert "app.py" in result.changed_paths
 
 
 def test_review_other_markdown_still_counted(repo):
@@ -786,6 +787,39 @@ def test_task_contract_planned_files_do_not_expand_scope(repo):
         "Unplanned production file: workflow.py" in v
         for v in compliance.violations
     )
+
+
+def test_task_contract_artifact_is_read_but_not_reviewed_as_production(repo):
+    (repo / "src").mkdir()
+    production = repo / "src" / "UserService.java"
+    production.write_text(
+        'class UserService { String lookup() { return "user"; } }\n',
+        encoding="utf-8",
+    )
+    task_path = repo / ".project-guard-task-contract.json"
+    task_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "original_request": "Change user lookup behavior",
+                "planned_production_files": ["src/UserService.java"],
+                "scope_amendments": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    production.write_text(
+        'class UserService { String lookup() { return "updated"; } }\n',
+        encoding="utf-8",
+    )
+
+    task = load_task_contract(task_path)
+    result = analyze_diff(repo)
+
+    assert task.planned_production_files == ["src/UserService.java"]
+    assert result.changed_paths == ["src/UserService.java"]
+    assert ".project-guard-task-contract.json" not in result.changed_paths
+    assert result.changed_source_files == ["src/UserService.java"]
 
 
 def test_task_contract_amendments_alias_preserves_canonical_field(tmp_path):

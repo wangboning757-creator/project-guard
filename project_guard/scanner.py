@@ -8,6 +8,7 @@ import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from .artifacts import is_project_guard_artifact
 from .config import IGNORED_DIRS, MAX_TOP_DIRS
 from .models import DependencySummary, DirSummary, FileInfo, ScanResult
 
@@ -26,7 +27,13 @@ def count_lines(path: Path) -> int:
 
 def iter_files(root: Path):
     for path in sorted(root.rglob("*")):
-        if path.is_file() and not _is_ignored(path, root):
+        if (
+            path.is_file()
+            and not _is_ignored(path, root)
+            and not is_project_guard_artifact(
+                path.relative_to(root).as_posix()
+            )
+        ):
             yield path
 
 

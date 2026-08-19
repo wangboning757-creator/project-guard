@@ -13,7 +13,10 @@ Project Guard is not an AI architect, a semantic-correctness verifier, or a
 security sandbox. It does not prove that code is correct, complete, or free of
 security issues.
 
-**Project Guard v0.6.0 is published on PyPI.** Several platform integrations
+**Project Guard v0.6.1 is the current release target.** It contains a
+maintenance fix for Project Guard self-contamination: Project Guard-owned
+governance artifacts are excluded from repository analysis while remaining
+available as governance inputs for review. Several platform integrations
 remain Experimental because their behavior depends on the platform's Hook or
 Plugin runtime.
 
@@ -37,7 +40,7 @@ project-guard --help
 The version command should report:
 
 ```text
-0.6.0
+0.6.1
 ```
 
 Project Guard does not install or authenticate Claude Code, Codex, Cline,
@@ -162,6 +165,10 @@ request:
 The Agent-owned `.project-guard-task-contract.json` records explicit
 requirements, inferences, assumptions, planned production files, and scope
 amendments. `prepare` does not create it.
+
+Project Guard-owned governance artifacts are excluded from repository analysis
+so they do not affect health metrics or planning candidates; Engineering and
+Task Contracts remain available for governance and review.
 
 ## Platform Integrations
 
@@ -503,10 +510,11 @@ python -m ruff check .
 
 ## Release and Distribution
 
-Project Guard v0.6.0 is published as `project-guard` on PyPI. It introduces
-lightweight multi-language repository intelligence while retaining Python
-AST-based analysis. The release uses the local-first CLI and does not add a
-remote Project Guard server.
+Project Guard v0.6.1 is the current release target for `project-guard` on PyPI.
+It retains lightweight multi-language repository intelligence and Python
+AST-based analysis while including the internal artifact isolation maintenance
+fix. The release uses the local-first CLI and does not add a remote Project
+Guard server.
 
 Publishing workflow details are documented in
 [docs/publishing.md](docs/publishing.md). Future changes should preserve the

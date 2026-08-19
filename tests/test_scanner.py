@@ -59,3 +59,31 @@ def test_scan_size_checks_ignore_non_source_files(tmp_path):
     scan = scan_project(tmp_path)
     assert scan.largest_file.path == "huge.py"
     assert [f.path for f in scan.large_files] == ["huge.py"]
+
+
+def test_scan_excludes_owned_artifacts_but_keeps_user_cline_files(tmp_path):
+    (tmp_path / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / ".project-guard-plan.json").write_text(
+        "x\n" * 20, encoding="utf-8"
+    )
+    (tmp_path / ".project-guard-task-contract.json").write_text(
+        "x\n" * 20, encoding="utf-8"
+    )
+    plugin = tmp_path / ".cline" / "plugins"
+    plugin.mkdir(parents=True)
+    (plugin / "project-guard.js").write_text(
+        "x\n" * 20, encoding="utf-8"
+    )
+    rules = tmp_path / ".cline" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "custom.md").write_text("# user rule\n", encoding="utf-8")
+
+    scan = scan_project(tmp_path)
+
+    assert scan.file_count == 2
+    assert scan.total_lines == 2
+    assert scan.largest_file.path == "app.py"
+    assert [file.path for file in scan.files] == [
+        ".cline/rules/custom.md",
+        "app.py",
+    ]

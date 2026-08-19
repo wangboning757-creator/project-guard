@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from .artifacts import is_project_guard_artifact
 from .config import (
     DEPENDENCY_FILES,
     DIFF_HUGE_ADDITIONS,
@@ -247,6 +248,8 @@ def analyze_diff(
     )
 
     def _is_excluded(rel: str) -> bool:
+        if is_project_guard_artifact(rel):
+            return True
         if not excluded_abs:
             return False
         try:

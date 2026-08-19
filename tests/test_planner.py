@@ -39,6 +39,53 @@ def test_plan_no_match_suggests_new_module(tmp_path):
     assert "new module" in result.suggestion
 
 
+def test_plan_ignores_project_guard_artifacts(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "SearchProvider.java").write_text(
+        "interface SearchProvider {}\n", encoding="utf-8"
+    )
+    (src / "GoogleSearchProvider.java").write_text(
+        "class GoogleSearchProvider implements SearchProvider {}\n",
+        encoding="utf-8",
+    )
+    (src / "ProviderFactory.java").write_text(
+        "class ProviderFactory { SearchProvider create() { return null; } }\n",
+        encoding="utf-8",
+    )
+    for name in (
+        ".project-guard-plan.json",
+        ".project-guard-contract.json",
+        ".project-guard-instructions.md",
+        ".project-guard-skill.md",
+        ".project-guard-agent-prompt.md",
+        ".project-guard-task-contract.json",
+    ):
+        (tmp_path / name).write_text(
+            "SearchProvider GoogleSearchProvider ProviderFactory\n",
+            encoding="utf-8",
+        )
+    plugin = tmp_path / ".cline" / "plugins"
+    plugin.mkdir(parents=True)
+    (plugin / "project-guard.js").write_text(
+        "SearchProvider GoogleSearchProvider ProviderFactory\n",
+        encoding="utf-8",
+    )
+
+    result = analyze_plan(tmp_path, "Add another search provider")
+    paths = [match.path for match in result.matches]
+    guardrail = result.guardrail
+
+    assert {"src/SearchProvider.java", "src/GoogleSearchProvider.java"} <= set(
+        paths
+    )
+    assert "src/ProviderFactory.java" in paths or "ProviderFactory" in guardrail
+    assert not any(path.startswith(".project-guard-") for path in paths)
+    assert ".cline/plugins/project-guard.js" not in paths
+    assert ".project-guard-" not in guardrail
+    assert ".cline/plugins/project-guard.js" not in guardrail
+
+
 def test_plan_test_mentions_are_not_treated_as_feature(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_x.py").write_text(
