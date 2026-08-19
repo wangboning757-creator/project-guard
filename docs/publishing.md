@@ -3,6 +3,10 @@
 This document describes the minimal v0.5.0 publishing path. It uses GitHub
 Actions and PyPI Trusted Publishing; it does not use a long-lived API token.
 
+Project Guard v0.5.0 has been successfully published to PyPI. The published
+package was verified in a clean environment with version, CLI help, prepare,
+and package-resource smoke checks.
+
 ## Source integrity
 
 The publishing workflow builds the immutable `v0.5.0` tag, not the branch
