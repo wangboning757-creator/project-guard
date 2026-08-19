@@ -13,9 +13,9 @@ Project Guard is not an AI architect, a semantic-correctness verifier, or a
 security sandbox. It does not prove that code is correct, complete, or free of
 security issues.
 
-**v0.6.0 is the current release candidate.** v0.5.0 is published on PyPI;
-several platform integrations remain Experimental because their behavior
-depends on the platform's Hook or Plugin runtime.
+**Project Guard v0.6.0 is published on PyPI.** Several platform integrations
+remain Experimental because their behavior depends on the platform's Hook or
+Plugin runtime.
 
 ## Installation
 
@@ -89,16 +89,19 @@ diff.
 
 ## Language-aware Repository Intelligence
 
-Project Guard keeps Python's AST-based indexing and adds lightweight
-structural indexing for:
+Project Guard uses different levels of repository intelligence by language:
 
-- Python - AST-based symbols and imports
-- Java - classes, interfaces, methods, imports, and inheritance signals
-- JavaScript / TypeScript - classes, functions, imports, exports, and type/interface signals
-- Go - named types, functions, methods, imports, and CLI entry hints
-- Rust - structs, enums, traits, functions, `use` relationships, and entry hints
-- HTML - script, stylesheet, form, id, and class references
-- Other text files - filename and text-search fallback
+- Python - AST-based structural indexing for symbols and imports
+- Java - lightweight structural indexing for classes, interfaces, methods, imports, and inheritance signals
+- JavaScript - lightweight structural indexing for classes, functions, imports, and exports
+- TypeScript - lightweight structural indexing for classes, functions, imports, exports, and type/interface signals
+- Go - lightweight structural indexing for named types, functions, methods, imports, and CLI entry hints
+- Rust - lightweight structural indexing for structs, enums, traits, functions, `use` relationships, and entry hints
+- HTML - resource/reference indexing for scripts, stylesheets, form actions, ids, classes, and related elements
+- Other text files - filename/text fallback
+
+HTML indexing helps connect pages with related scripts, stylesheets, and form
+endpoints; it is not DOM or browser-behavior analysis.
 
 This is lightweight heuristic repository intelligence, not full compiler
 semantic analysis. It does not provide type resolution, a call graph, or
@@ -500,9 +503,10 @@ python -m ruff check .
 
 ## Release and Distribution
 
-Project Guard v0.6.0 is the next release candidate. v0.5.0 is published as
-`project-guard` on PyPI. The release uses the local-first CLI and does not add
-a remote Project Guard server.
+Project Guard v0.6.0 is published as `project-guard` on PyPI. It introduces
+lightweight multi-language repository intelligence while retaining Python
+AST-based analysis. The release uses the local-first CLI and does not add a
+remote Project Guard server.
 
 Publishing workflow details are documented in
 [docs/publishing.md](docs/publishing.md). Future changes should preserve the

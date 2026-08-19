@@ -1,19 +1,19 @@
 # Project Guard Publishing
 
-This document describes the minimal v0.5.0 publishing path. It uses GitHub
+This document describes the minimal v0.6.0 publishing path. It uses GitHub
 Actions and PyPI Trusted Publishing; it does not use a long-lived API token.
 
-Project Guard v0.5.0 has been successfully published to PyPI. The published
-package was verified in a clean environment with version, CLI help, prepare,
-and package-resource smoke checks.
+Project Guard v0.6.0 has been successfully published to PyPI. TestPyPI and
+PyPI were verified in clean environments with version, CLI help, prepare,
+multi-language, and package-resource smoke checks.
 
 ## Source integrity
 
-The publishing workflow builds the immutable `v0.5.0` tag, not the branch
+The publishing workflow builds the immutable `v0.6.0` tag, not the branch
 commit that added the workflow. The expected source commit is:
 
 ```text
-5504cfea9daf4ff5a582ff7d95b50a48310d4eaa
+4de5faac778d8045098f5a7f49d5ce2525b4bb4c
 ```
 
 The workflow is manual-only. Its `target` input is either `testpypi` or
@@ -58,7 +58,7 @@ Official references:
    .tmp-testpypi-venv\Scripts\python -m pip install `
      --index-url https://test.pypi.org/simple/ `
      --extra-index-url https://pypi.org/simple/ `
-     project-guard==0.5.0
+     project-guard==0.6.0
    .tmp-testpypi-venv\Scripts\project-guard --version
    ```
 
@@ -77,5 +77,5 @@ workflow with `target: pypi`, and the `pypi` Environment should require manual
 approval.
 
 This repository does not automatically publish GitHub Releases. After a
-successful PyPI publication, verify `pip install project-guard==0.5.0` in a
-clean environment before changing the README's primary installation command.
+successful PyPI publication, verify `pip install project-guard==0.6.0` in a
+clean environment before updating the current release documentation.
