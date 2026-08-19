@@ -17,13 +17,13 @@ permissions:
 
 jobs:
   build:
-    name: Build v0.6.0 distributions
+    name: Build v0.6.1 distributions
     runs-on: ubuntu-latest
     steps:
       - name: Check out the immutable release source
         uses: actions/checkout@v6
         with:
-          ref: v0.6.0
+          ref: v0.6.1
           persist-credentials: false
 
       - name: Set up Python
@@ -43,11 +43,11 @@ jobs:
       - name: Store distributions
         uses: actions/upload-artifact@v5
         with:
-          name: project-guard-0.6.0-distributions
+          name: project-guard-0.6.1-distributions
           path: dist/
 
   publish-testpypi:
-    name: Publish v0.6.0 to TestPyPI
+    name: Publish v0.6.1 to TestPyPI
     if: inputs.target == 'testpypi'
     needs: build
     runs-on: ubuntu-latest
@@ -60,7 +60,7 @@ jobs:
       - name: Download distributions
         uses: actions/download-artifact@v6
         with:
-          name: project-guard-0.6.0-distributions
+          name: project-guard-0.6.1-distributions
           path: dist/
 
       - name: Publish to TestPyPI
@@ -69,7 +69,7 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
 
   publish-pypi:
-    name: Publish v0.6.0 to PyPI
+    name: Publish v0.6.1 to PyPI
     if: inputs.target == 'pypi'
     needs: build
     runs-on: ubuntu-latest
@@ -82,7 +82,7 @@ jobs:
       - name: Download distributions
         uses: actions/download-artifact@v6
         with:
-          name: project-guard-0.6.0-distributions
+          name: project-guard-0.6.1-distributions
           path: dist/
 
       - name: Publish to PyPI
