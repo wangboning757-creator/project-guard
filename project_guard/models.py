@@ -42,17 +42,25 @@ class ScanResult(BaseModel):
     @property
     def python_files(self) -> list[FileInfo]:
         return [
-            f for f in self.files if Path(f.path).suffix in SOURCE_EXTENSIONS
+            f for f in self.files if Path(f.path).suffix.lower() == ".py"
+        ]
+
+    @property
+    def source_files(self) -> list[FileInfo]:
+        return [
+            f
+            for f in self.files
+            if Path(f.path).suffix.lower() in SOURCE_EXTENSIONS
         ]
 
     @property
     def largest_file(self) -> FileInfo | None:
-        return self.python_files[0] if self.python_files else None
+        return self.source_files[0] if self.source_files else None
 
     @property
     def large_files(self) -> list[FileInfo]:
         return [
-            f for f in self.python_files if f.lines >= LARGE_FILE_LINES
+            f for f in self.source_files if f.lines >= LARGE_FILE_LINES
         ]
 
 
@@ -99,6 +107,7 @@ class ReviewResult(BaseModel):
     many_modules_changed: bool = False
     large_file_additions: list[str] = []
     changed_python_files: list[str] = []
+    changed_source_files: list[str] = []
     duplicated_modules: list[str] = []
     oversized_changed_files: list[str] = []
     risk: str = "LOW"

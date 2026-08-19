@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "project-guard"
-version = "0.5.0"
+version = "0.6.0"
 description = "Small, local-first AI coding governance CLI"
 readme = "README.md"
 requires-python = ">=3.12"

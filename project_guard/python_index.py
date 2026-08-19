@@ -3,19 +3,12 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass, field
 from pathlib import Path
 
+from .symbol_index import SymbolIndex
 
-@dataclass
-class ModuleIndex:
-    path: str
-    classes: list[str] = field(default_factory=list)
-    functions: list[str] = field(default_factory=list)
-    imports: list[str] = field(default_factory=list)
-    bases: list[str] = field(default_factory=list)
-    top_functions: list[str] = field(default_factory=list)
-    identifiers: list[str] = field(default_factory=list)
+# Compatibility alias for existing internal imports and callers.
+ModuleIndex = SymbolIndex
 
 
 def _base_name(node: ast.AST) -> str | None:
@@ -49,10 +42,13 @@ def index_python_source(source: str, rel: str) -> ModuleIndex | None:
         tree = ast.parse(source)
     except (SyntaxError, OSError, ValueError):
         return None
-    index = ModuleIndex(path=rel)
+    index = ModuleIndex(path=rel, language="python")
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             index.top_functions.append(node.name)
+    index.entry_points = (
+        ["main"] if "main" in index.top_functions or rel.endswith("/__main__.py") else []
+    )
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             index.classes.append(node.name)
@@ -60,6 +56,8 @@ def index_python_source(source: str, rel: str) -> ModuleIndex | None:
                 name = _base_name(base)
                 if name:
                     index.bases.append(name)
+                    if name.lower() in {"protocol", "abc", "abcmeta"}:
+                        index.abstract_symbols.append(node.name)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             index.functions.append(node.name)
             _collect_args(node, index)

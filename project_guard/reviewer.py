@@ -15,6 +15,7 @@ from .config import (
     DIFF_LARGE_FILE_ADDED,
     DIFF_MANY_MODULES,
     LARGE_FILE_LINES,
+    SOURCE_EXTENSIONS,
 )
 from .models import (
     ComplexitySignal,
@@ -35,8 +36,9 @@ from .planner import (
     _keywords,
     _token_overlap,
 )
-from .python_index import ModuleIndex, index_python_file, index_python_source
+from .python_index import ModuleIndex
 from .scanner import count_lines, iter_files
+from .symbol_index import index_source_file, index_source_text
 
 
 class NotAGitRepoError(RuntimeError):
@@ -154,10 +156,15 @@ def approved_amendment_files(task_contract: TaskContract) -> list[str]:
 
 def _is_test_path(rel: str) -> bool:
     parts = Path(rel).parts
+    name = Path(rel).name.lower()
+    stem = Path(rel).stem.lower()
     return (
         "tests" in parts
-        or Path(rel).name.startswith("test_")
-        or Path(rel).name.endswith("_test.py")
+        or "__tests__" in parts
+        or "test" in parts
+        or ("src" in parts and "test" in parts)
+        or name.startswith("test_")
+        or stem.endswith(("_test", ".test", ".spec"))
     )
 
 
@@ -220,7 +227,7 @@ def _numstat(root: Path) -> dict[str, tuple[int, int]]:
 def _existing_stem_map(root: Path) -> dict[str, list[str]]:
     stem_map: dict[str, list[str]] = {}
     for path in iter_files(root):
-        if path.suffix != ".py":
+        if path.suffix.lower() not in SOURCE_EXTENSIONS:
             continue
         stem = path.stem.lower()
         if stem in ("__init__", "__main__"):
@@ -269,6 +276,7 @@ def analyze_diff(
     total_deleted = 0
     large_file_additions: list[str] = []
     changed_python: list[str] = []
+    changed_source: list[str] = []
     oversized: list[str] = []
     for path in paths:
         added, deleted = numstat.get(path, (0, 0))
@@ -279,19 +287,24 @@ def analyze_diff(
         total_deleted += deleted
         if added >= DIFF_LARGE_FILE_ADDED:
             large_file_additions.append(f"{path} (+{added})")
-        if path.endswith(".py"):
-            changed_python.append(path)
+        if Path(path).suffix.lower() in SOURCE_EXTENSIONS:
+            changed_source.append(path)
+            if path.endswith(".py"):
+                changed_python.append(path)
             full = root / path
             if full.is_file() and count_lines(full) >= LARGE_FILE_LINES:
                 oversized.append(path)
 
     dependency_changed = any(Path(p).name in DEPENDENCY_FILES for p in paths)
-    many_modules = len(changed_python) > DIFF_MANY_MODULES
+    many_modules = len(changed_source) > DIFF_MANY_MODULES
 
     stem_map = _existing_stem_map(root)
     duplicated: list[str] = []
     for path in paths:
-        if changed.get(path) != "A" or not path.endswith(".py"):
+        if (
+            changed.get(path) != "A"
+            or Path(path).suffix.lower() not in SOURCE_EXTENSIONS
+        ):
             continue
         stem = Path(path).stem.lower()
         if stem in ("__init__", "__main__"):
@@ -312,7 +325,7 @@ def analyze_diff(
             "large single-file additions: " + ", ".join(large_file_additions)
         )
     if many_modules:
-        reasons.append(f"{len(changed_python)} Python modules changed")
+        reasons.append(f"{len(changed_source)} source modules changed")
     if duplicated:
         reasons.append(
             "possible duplicated modules: " + ", ".join(duplicated)
@@ -351,6 +364,7 @@ def analyze_diff(
         many_modules_changed=many_modules,
         large_file_additions=large_file_additions,
         changed_python_files=changed_python,
+        changed_source_files=changed_source,
         duplicated_modules=duplicated,
         oversized_changed_files=oversized,
         risk=risk,
@@ -377,7 +391,7 @@ def format_review(
         f"Added files: {result.added_files}",
         f"Deleted files: {result.deleted_files}",
         f"Dependency files changed: {'yes' if result.dependency_changed else 'no'}",
-        f"Changed Python modules: {len(result.changed_python_files)}",
+        f"Changed source modules: {len(result.changed_source_files)}",
         f"Risk level: {risk or result.risk}",
         "",
         "Reasons:",
@@ -412,7 +426,7 @@ def check_plan_compliance(
     production = [
         p
         for p in result.changed_paths
-        if p.endswith(".py") and not _is_test_path(p)
+        if Path(p).suffix.lower() in SOURCE_EXTENSIONS and not _is_test_path(p)
     ]
 
     violations: list[str] = []
@@ -478,26 +492,40 @@ def _new_top_level_symbols(
     """Top-level classes/functions added by the diff per file."""
     added: dict[str, tuple[list[str], list[str]]] = {}
     for rel in result.changed_paths:
-        if not rel.endswith(".py") or _is_test_path(rel):
+        if (
+            Path(rel).suffix.lower() not in SOURCE_EXTENSIONS
+            or _is_test_path(rel)
+        ):
             continue
         full = root / rel
         if not full.is_file():
             continue
-        after = index_python_file(full, rel)
+        after = index_source_file(full, rel)
         if after is None:
             continue
         before_src = _git_optional(root, "show", f"HEAD:{rel}")
         before = (
-            index_python_source(before_src, rel)
+            index_source_text(before_src, rel)
             if before_src is not None
             else None
         )
         before_classes = set(before.classes) if before is not None else set()
         before_functions = (
-            set(before.top_functions) if before is not None else set()
+            set(
+                before.top_functions
+                if before.language == "python"
+                else before.functions
+            )
+            if before is not None
+            else set()
         )
         new_classes = set(after.classes) - before_classes
-        new_functions = set(after.top_functions) - before_functions
+        after_functions = (
+            after.top_functions
+            if after.language == "python"
+            else after.functions
+        )
+        new_functions = set(after_functions) - before_functions
         if new_classes or new_functions:
             added[rel] = (
                 sorted(new_classes),
@@ -529,7 +557,7 @@ def check_reuse_warnings(
 
     index: dict[str, ModuleIndex] = {}
     for cap in cap_files:
-        idx = index_python_file(root / cap, cap)
+        idx = index_source_file(root / cap, cap)
         if idx is not None:
             index[cap] = idx
     verified = [
@@ -566,12 +594,12 @@ def check_complexity(
     production = [
         p
         for p in result.changed_paths
-        if p.endswith(".py") and not _is_test_path(p)
+        if Path(p).suffix.lower() in SOURCE_EXTENSIONS and not _is_test_path(p)
     ]
     new_files = [
         p
         for p in result.added_paths
-        if p.endswith(".py") and not _is_test_path(p)
+        if Path(p).suffix.lower() in SOURCE_EXTENSIONS and not _is_test_path(p)
     ]
     new_classes = 0
     new_functions = 0
@@ -623,7 +651,7 @@ def check_requirement_fidelity(
     production = [
         p
         for p in result.changed_paths
-        if p.endswith(".py") and not _is_test_path(p)
+        if Path(p).suffix.lower() in SOURCE_EXTENSIONS and not _is_test_path(p)
     ]
     allowed = set(contract.recommended_scope) | set(contract.possible_scope)
     if production and not any(p in allowed for p in production):
@@ -737,7 +765,7 @@ def format_quality_signals(
     new_files = [
         p
         for p in result.added_paths
-        if p.endswith(".py") and not _is_test_path(p)
+        if Path(p).suffix.lower() in SOURCE_EXTENSIONS and not _is_test_path(p)
     ]
     lines = [
         "Implementation Quality Signals:",

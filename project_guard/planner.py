@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
+from .config import SOURCE_EXTENSIONS
 from .models import (
     ComplexityBudget,
     EngineeringContract,
@@ -12,8 +14,10 @@ from .models import (
     PlanResult,
     PlanSnapshot,
 )
-from .python_index import ModuleIndex, index_python_file
 from .scanner import count_lines, iter_files
+from .symbol_index import SymbolIndex, index_source_file
+
+ModuleIndex = SymbolIndex
 
 STOPWORDS = {
     "a", "an", "the", "to", "for", "of", "in", "on", "with", "and", "or",
@@ -71,15 +75,23 @@ REUSE_GOAL_PHRASES = ("reuse", "use existing", "reuse existing", "instead of")
 
 def _is_test_path(rel: str) -> bool:
     parts = Path(rel).parts
+    name = Path(rel).name.lower()
+    stem = Path(rel).stem.lower()
     return (
         "tests" in parts
-        or Path(rel).name.startswith("test_")
-        or Path(rel).name.endswith("_test.py")
+        or "__tests__" in parts
+        or "test" in parts
+        or ("src" in parts and "test" in parts)
+        or name.startswith("test_")
+        or stem.endswith(("_test", ".test", ".spec"))
     )
 
 
 def _is_source(rel: str) -> bool:
-    return rel.endswith(".py") and not _is_test_path(rel)
+    return (
+        Path(rel).suffix.lower() in SOURCE_EXTENSIONS
+        and not _is_test_path(rel)
+    )
 
 
 def _is_init(path: str) -> bool:
@@ -162,6 +174,18 @@ def _search(root: Path, keywords: list[str]) -> list[PlanMatch]:
                 hits=count,
                 lines=count_lines(path),
             )
+    if any(k in CLI_KEYWORDS for k in keywords):
+        for path in iter_files(root):
+            rel = path.relative_to(root).as_posix()
+            if rel in matches or not _is_source(rel):
+                continue
+            idx = index_source_file(path, rel)
+            if idx is not None and idx.entry_points:
+                matches[rel] = PlanMatch(
+                    path=rel,
+                    hits=0,
+                    lines=count_lines(path),
+                )
     return list(matches.values())
 
 
@@ -183,7 +207,7 @@ def _ownership_score(path: str, keywords: list[str]) -> int:
 
 
 def _cli_entry_modules(root: Path) -> set[str]:
-    """Rel paths of modules referenced by console scripts in pyproject.toml."""
+    """Rel paths of files referenced by common CLI manifests."""
     modules: set[str] = set()
     pyproject = root / "pyproject.toml"
     if not pyproject.is_file():
@@ -203,6 +227,27 @@ def _cli_entry_modules(root: Path) -> set[str]:
             module = target.split(":", 1)[0].strip()
             if module:
                 modules.add(module.replace(".", "/") + ".py")
+    package_json = root / "package.json"
+    if package_json.is_file():
+        try:
+            data = json.loads(
+                package_json.read_text(encoding="utf-8", errors="ignore")
+            )
+        except (OSError, ValueError):
+            data = {}
+        if isinstance(data, dict):
+            main = data.get("main")
+            if isinstance(main, str):
+                modules.add(Path(main).as_posix())
+            bin_value = data.get("bin")
+            if isinstance(bin_value, str):
+                modules.add(Path(bin_value).as_posix())
+            elif isinstance(bin_value, dict):
+                modules.update(
+                    Path(value).as_posix()
+                    for value in bin_value.values()
+                    if isinstance(value, str)
+                )
     return modules
 
 
@@ -219,7 +264,7 @@ def _cli_ownership(
     idx = index.get(path)
     if idx is None:
         return 0
-    if "main" in idx.functions:
+    if idx.entry_points or "main" in idx.functions:
         return 1
     if any(i in CLI_IMPORT_NAMES for i in idx.imports):
         return 1
@@ -308,6 +353,7 @@ def _has_direct_capability_evidence(
         set(idx.classes)
         | set(idx.functions)
         | set(idx.imports)
+        | set(idx.exports)
         | set(idx.identifiers)
     )
     return any(
@@ -340,6 +386,7 @@ def _find_capability_wiring_points(
         if idx is not None:
             owner_names |= set(idx.classes)
             owner_names |= set(idx.functions)
+            owner_names |= set(idx.exports)
             owner_names.add(Path(cap).stem.lstrip("_").lower())
     if not owner_names:
         return []
@@ -358,6 +405,7 @@ def _find_capability_wiring_points(
             set(idx.classes)
             | set(idx.functions)
             | set(idx.imports)
+            | set(idx.exports)
             | set(idx.identifiers)
         )
         if not any(
@@ -408,6 +456,10 @@ def build_engineering_contract(
         facts.append(f"Existing capability detected: {cap}")
     for point in wiring:
         facts.append(f"Provider construction detected: {point}")
+    for path in snapshot.recommended_scope + snapshot.possible_scope:
+        idx = index.get(path)
+        if idx is not None and idx.abstract_symbols:
+            facts.append(f"Existing abstraction detected: {path}")
     if not facts:
         facts.append("No high-confidence structural facts found.")
 
@@ -480,6 +532,8 @@ def _symbol_hits(
             def_hits += 1
         if any(any(t in i.lower() for t in terms) for i in index.imports):
             import_hits += 1
+        if any(any(t in e.lower() for t in terms) for e in index.exports):
+            def_hits += 1
     return def_hits, import_hits
 
 
@@ -494,14 +548,20 @@ def _find_abstraction(
     candidates: list[PlanMatch] = []
     for files in dirs.values():
         base_file = next(
-            (f for f in files if Path(f.path).stem == "base"), None
+            (
+                f
+                for f in files
+                if Path(f.path).stem == "base"
+                or index.get(f.path, ModuleIndex(path=f.path)).abstract_symbols
+            ),
+            None,
         )
         if base_file is None:
             continue
         idx = index.get(base_file.path)
         if idx is None:
             continue
-        is_abstract = any(
+        is_abstract = bool(idx.abstract_symbols) or any(
             "provider" in c.lower() for c in idx.classes
         ) or any(b.lower() in ABSTRACT_BASE_NAMES for b in idx.bases)
         if not is_abstract:
@@ -517,6 +577,7 @@ def _find_abstraction(
         return None
     best = max(candidates, key=lambda m: (m.symbol_hits, m.hits))
     base_classes = set(index[best.path].classes)
+    base_classes.update(index[best.path].abstract_symbols)
     d = best.path.rpartition("/")[0]
     impl_paths: set[str] = set()
     for m in matches:
@@ -528,7 +589,10 @@ def _find_abstraction(
         if idx is not None:
             is_impl = any(
                 "provider" in c.lower() for c in idx.classes
-            ) or any(b in base_classes for b in idx.bases)
+            ) or any(
+                b in base_classes or b.rsplit(".", 1)[-1] in base_classes
+                for b in idx.bases
+            )
             if is_impl:
                 impl_paths.add(m.path)
     return best.path, impl_paths
@@ -806,7 +870,7 @@ def analyze_plan(root: Path, request: str) -> PlanResult:
     for m in matches:
         if not _is_source(m.path):
             continue
-        idx = index_python_file(root / m.path, m.path)
+        idx = index_source_file(root / m.path, m.path)
         if idx is not None:
             index[m.path] = idx
             symbol_scores[m.path] = _symbol_hits(idx, keywords)

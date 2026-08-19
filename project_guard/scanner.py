@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
+import tomllib
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .config import IGNORED_DIRS, MAX_TOP_DIRS
@@ -85,6 +88,75 @@ def _package_json_names(path: Path) -> list[str]:
     return names
 
 
+def _pom_names(path: Path) -> list[str]:
+    try:
+        root = ET.fromstring(path.read_text(encoding="utf-8", errors="ignore"))
+    except (OSError, ET.ParseError):
+        return []
+    names: list[str] = []
+    for dependency in root.iter():
+        if dependency.tag.rsplit("}", 1)[-1] != "dependency":
+            continue
+        values = {
+            child.tag.rsplit("}", 1)[-1]: (child.text or "").strip()
+            for child in dependency
+        }
+        group = values.get("groupId")
+        artifact = values.get("artifactId")
+        if group and artifact:
+            names.append(f"{group}:{artifact}")
+    return names
+
+
+def _gradle_names(path: Path) -> list[str]:
+    try:
+        source = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    pattern = re.compile(
+        r"\b(?:implementation|api|testImplementation|runtimeOnly|compileOnly)"
+        r"\s*(?:\(\s*)?[\"']([^\"']+)[\"']\s*\)?"
+    )
+    return [match.group(1) for match in pattern.finditer(source)]
+
+
+def _go_mod_names(path: Path) -> list[str]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return []
+    names: list[str] = []
+    in_require = False
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("require ("):
+            in_require = True
+            continue
+        if in_require and line == ")":
+            in_require = False
+            continue
+        if line.startswith("require "):
+            line = line[len("require "):].strip()
+        if in_require or raw.startswith("require "):
+            parts = line.split()
+            if parts and not parts[0].startswith("//"):
+                names.append(parts[0])
+    return names
+
+
+def _cargo_names(path: Path) -> list[str]:
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8", errors="ignore"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    names: list[str] = []
+    for section in ("dependencies", "dev-dependencies"):
+        values = data.get(section, {})
+        if isinstance(values, dict):
+            names.extend(str(name) for name in values)
+    return names
+
+
 def _scan_dependencies(root: Path) -> list[DependencySummary]:
     result: list[DependencySummary] = []
 
@@ -107,6 +179,19 @@ def _scan_dependencies(root: Path) -> list[DependencySummary]:
     package_json = root / "package.json"
     if package_json.is_file():
         add("package.json", _package_json_names(package_json))
+    pom = root / "pom.xml"
+    if pom.is_file():
+        add("pom.xml", _pom_names(pom))
+    for name in ("build.gradle", "build.gradle.kts"):
+        gradle = root / name
+        if gradle.is_file():
+            add(name, _gradle_names(gradle))
+    go_mod = root / "go.mod"
+    if go_mod.is_file():
+        add("go.mod", _go_mod_names(go_mod))
+    cargo = root / "Cargo.toml"
+    if cargo.is_file():
+        add("Cargo.toml", _cargo_names(cargo))
     return result
 
 
@@ -135,7 +220,9 @@ def scan_project(root: Path) -> ScanResult:
     return ScanResult(
         root=str(root),
         file_count=len(files),
-        python_file_count=sum(1 for f in files if f.path.endswith(".py")),
+        python_file_count=sum(
+            1 for f in files if Path(f.path).suffix.lower() == ".py"
+        ),
         total_lines=sum(f.lines for f in files),
         max_depth=max_depth,
         files=files,

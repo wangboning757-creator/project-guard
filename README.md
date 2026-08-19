@@ -13,9 +13,9 @@ Project Guard is not an AI architect, a semantic-correctness verifier, or a
 security sandbox. It does not prove that code is correct, complete, or free of
 security issues.
 
-**v0.5.0 is published on PyPI.** Several platform integrations remain
-Experimental because their behavior depends on the platform's Hook or Plugin
-runtime.
+**v0.6.0 is the current release candidate.** v0.5.0 is published on PyPI;
+several platform integrations remain Experimental because their behavior
+depends on the platform's Hook or Plugin runtime.
 
 ## Installation
 
@@ -37,7 +37,7 @@ project-guard --help
 The version command should report:
 
 ```text
-0.5.0
+0.6.0
 ```
 
 Project Guard does not install or authenticate Claude Code, Codex, Cline,
@@ -86,6 +86,24 @@ The user defines the requirement. Project Guard provides repository facts,
 boundaries, and structured artifacts. The Coding Agent performs the semantic
 interpretation and implementation. Review independently audits the resulting
 diff.
+
+## Language-aware Repository Intelligence
+
+Project Guard keeps Python's AST-based indexing and adds lightweight
+structural indexing for:
+
+- Python - AST-based symbols and imports
+- Java - classes, interfaces, methods, imports, and inheritance signals
+- JavaScript / TypeScript - classes, functions, imports, exports, and type/interface signals
+- Go - named types, functions, methods, imports, and CLI entry hints
+- Rust - structs, enums, traits, functions, `use` relationships, and entry hints
+- HTML - script, stylesheet, form, id, and class references
+- Other text files - filename and text-search fallback
+
+This is lightweight heuristic repository intelligence, not full compiler
+semantic analysis. It does not provide type resolution, a call graph, or
+complete understanding of every language construct. Malformed or complex
+source may therefore produce only text-level evidence.
 
 ## Core Commands
 
@@ -482,8 +500,9 @@ python -m ruff check .
 
 ## Release and Distribution
 
-Project Guard v0.5.0 is published as `project-guard` on PyPI. The release
-uses the local-first CLI and does not add a remote Project Guard server.
+Project Guard v0.6.0 is the next release candidate. v0.5.0 is published as
+`project-guard` on PyPI. The release uses the local-first CLI and does not add
+a remote Project Guard server.
 
 Publishing workflow details are documented in
 [docs/publishing.md](docs/publishing.md). Future changes should preserve the
