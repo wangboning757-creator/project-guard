@@ -3,11 +3,20 @@
 This document describes the minimal v0.6.1 publishing path. It uses GitHub
 Actions and PyPI Trusted Publishing; it does not use a long-lived API token.
 
-Project Guard v0.6.0 was successfully published to PyPI. For v0.6.1, repeat
-the TestPyPI and PyPI clean-environment checks after the release workflow is
-updated to build the immutable `v0.6.1` tag.
+Project Guard v0.6.1 has been successfully published to PyPI. TestPyPI and
+PyPI were verified in clean environments with version, CLI help, prepare,
+multi-language, package-resource, and artifact-isolation smoke checks. The
+verified command reports `project-guard --version -> 0.6.1`.
 
 ## Source integrity
+
+The current v0.6.1 package source is the immutable `v0.6.1` tag:
+
+```text
+23b1bb27e7201c604c5dc869fb60fbca36c51e2e
+```
+
+The tag was not moved, and v0.6.1 was not re-uploaded with different contents.
 
 The v0.6.0 workflow built the immutable `v0.6.0` tag, not the branch commit
 that added the workflow. Its historical source commit was:
@@ -30,7 +39,7 @@ entries. Configure both entries in the corresponding account:
 - Workflow: `publish.yml`
 - Environment: `testpypi` for TestPyPI, `pypi` for PyPI
 
-For a package that does not yet exist, use the current pending-publisher flow.
+For a new package that does not yet exist, use the current pending-publisher flow.
 The first successful upload creates the project. TestPyPI also requires its
 own account.
 
@@ -76,7 +85,7 @@ stop for explicit production approval. The production command is the same
 workflow with `target: pypi`, and the `pypi` Environment should require manual
 approval.
 
-This repository does not automatically publish GitHub Releases. For v0.6.1,
-the workflow source ref and artifact names must point to `v0.6.1`; after a
-successful PyPI publication, verify `pip install project-guard==0.6.1` in a
-clean environment before marking the release as published.
+This repository does not automatically publish GitHub Releases. The v0.6.1
+PyPI artifact was built from the release tag, and a clean installation with
+`pip install project-guard==0.6.1` was verified. No package re-upload is
+needed.

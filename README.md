@@ -13,7 +13,7 @@ Project Guard is not an AI architect, a semantic-correctness verifier, or a
 security sandbox. It does not prove that code is correct, complete, or free of
 security issues.
 
-**Project Guard v0.6.1 is the current release target.** It contains a
+**Project Guard v0.6.1 is published on PyPI.** It contains a
 maintenance fix for Project Guard self-contamination: Project Guard-owned
 governance artifacts are excluded from repository analysis while remaining
 available as governance inputs for review. Several platform integrations
@@ -510,11 +510,11 @@ python -m ruff check .
 
 ## Release and Distribution
 
-Project Guard v0.6.1 is the current release target for `project-guard` on PyPI.
-It retains lightweight multi-language repository intelligence and Python
-AST-based analysis while including the internal artifact isolation maintenance
-fix. The release uses the local-first CLI and does not add a remote Project
-Guard server.
+Project Guard v0.6.1 is published as `project-guard` on PyPI. It retains
+lightweight multi-language repository intelligence and Python AST-based
+analysis while including the internal artifact isolation maintenance fix. The
+release uses the local-first CLI and does not add a remote Project Guard
+server.
 
 Publishing workflow details are documented in
 [docs/publishing.md](docs/publishing.md). Future changes should preserve the
